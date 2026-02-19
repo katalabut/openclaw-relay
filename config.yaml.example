@@ -1,0 +1,93 @@
+server:
+  port: 8080
+  internal_token: "${RELAY_INTERNAL_TOKEN}"
+
+gateway:
+  url: "${OPENCLAW_GATEWAY_URL}"
+  token: "${OPENCLAW_GATEWAY_TOKEN}"
+  agent_id: "work"
+
+audit:
+  log_path: "/data/audit.log"
+
+trello:
+  secret: "${TRELLO_WEBHOOK_SECRET}"
+  lists:
+    # Map list names to your Trello list IDs
+    # Find IDs via: GET https://api.trello.com/1/boards/{boardId}/lists?key=KEY&token=TOKEN
+    ready: "${TRELLO_LIST_READY}"
+    questions: "${TRELLO_LIST_QUESTIONS}"
+    in_progress: "${TRELLO_LIST_IN_PROGRESS}"
+    dev: "${TRELLO_LIST_DEV}"
+    prod: "${TRELLO_LIST_PROD}"
+  rules:
+    - event: card_moved
+      condition: "list == 'ready'"
+      action:
+        kind: cron
+        timeout: 300
+        delay: 2
+        message_template: |
+          [Webhook Event] Trello card moved to Ready.
+
+          Card ID: {{.CardID}}
+          Card Name: {{.CardName}}
+          From: {{.ListBeforeName}}
+          To: {{.ListAfterName}}
+
+          Process this card according to your workflow.
+          Telegram notifications: target=${TELEGRAM_CHAT_ID}, channel=telegram.
+
+    - event: comment_added
+      condition: "list == 'questions'"
+      action:
+        kind: cron
+        delay: 180
+        timeout: 120
+        message_template: |
+          [Webhook Event] Comment added to Trello card in Questions column.
+
+          Card ID: {{.CardID}}
+          Card Name: {{.CardName}}
+
+          Check if the human answered the questions and re-assess if so.
+          Telegram notifications: target=${TELEGRAM_CHAT_ID}, channel=telegram.
+
+    - event: card_moved
+      condition: "list == 'in_progress' || list == 'dev' || list == 'prod'"
+      action:
+        kind: cron
+        timeout: 300
+        delay: 2
+        message_template: |
+          [Webhook Event] Trello card moved to {{.ListAfterName}}.
+
+          Card ID: {{.CardID}}
+          Card Name: {{.CardName}}
+          From: {{.ListBeforeName}}
+
+          Process this card according to your workflow.
+          Telegram notifications: target=${TELEGRAM_CHAT_ID}, channel=telegram.
+
+github:
+  secret: "${GITHUB_WEBHOOK_SECRET}"
+
+google:
+  client_id: "${GOOGLE_CLIENT_ID}"
+  client_secret: "${GOOGLE_CLIENT_SECRET}"
+  redirect_url: "https://${RELAY_DOMAIN}/auth/google/callback"
+  allowed_emails:
+    - "your@email.com"  # Add your Google account email here
+
+gmail:
+  enabled: true
+  poll_interval: 60s
+  rules:
+    - name: "new-inbox-message"
+      match:
+        labels: ["INBOX"]
+      action:
+        notify:
+          target: "${TELEGRAM_CHAT_ID}"
+          channel: "telegram"
+          template: "📧 {{.From}}: {{.Subject}}"

@@ -1,0 +1,31 @@
+services:
+  openclaw-relay:
+    build: .
+    container_name: openclaw-relay
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.yaml:/etc/relay/config.yaml:ro
+      - relay-data:/data
+    networks:
+      - webhook-relay_web
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.relay.rule=Host(`${RELAY_DOMAIN}`)"
+      - "traefik.http.routers.relay.entrypoints=websecure"
+      - "traefik.http.routers.relay.tls.certresolver=letsencrypt"
+      - "traefik.http.services.relay.loadbalancer.server.port=8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  relay-data:
+
+networks:
+  webhook-relay_web:
+    external: true
