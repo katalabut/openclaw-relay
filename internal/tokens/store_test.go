@@ -12,7 +12,6 @@ import (
 func TestStoreRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "tokens.json.enc")
-	// 32 bytes = 64 hex chars
 	key := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 	s, err := NewStore(fp, key)
@@ -30,7 +29,6 @@ func TestStoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Load fresh
 	s2, err := NewStore(fp, key)
 	if err != nil {
 		t.Fatal(err)
@@ -88,4 +86,68 @@ func TestStoreWrongKeyFails(t *testing.T) {
 		t.Fatal("expected decrypt error with wrong key")
 	}
 	_ = os.Remove(fp)
+}
+
+func TestGetGoogleOAuth2Token_Valid(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "tokens.json.enc")
+	key := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	s, _ := NewStore(fp, key)
+	tok := &oauth2.Token{AccessToken: "acc", RefreshToken: "ref", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)}
+	s.SaveGoogle(tok, "a@b.com")
+
+	ot := s.GetGoogleOAuth2Token()
+	if ot == nil {
+		t.Fatal("expected token")
+	}
+	if ot.AccessToken != "acc" || ot.RefreshToken != "ref" {
+		t.Errorf("unexpected: %+v", ot)
+	}
+}
+
+func TestGetGoogleOAuth2Token_Empty(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "tokens.json.enc")
+	key := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	s, _ := NewStore(fp, key)
+	if s.GetGoogleOAuth2Token() != nil {
+		t.Error("expected nil for empty store")
+	}
+}
+
+func TestUpdateGoogleAccessToken(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "tokens.json.enc")
+	key := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	s, _ := NewStore(fp, key)
+	tok := &oauth2.Token{AccessToken: "old", RefreshToken: "ref", Expiry: time.Now().Add(time.Hour)}
+	s.SaveGoogle(tok, "a@b.com")
+
+	newTok := &oauth2.Token{AccessToken: "new", Expiry: time.Now().Add(2 * time.Hour)}
+	if err := s.UpdateGoogleAccessToken(newTok); err != nil {
+		t.Fatal(err)
+	}
+
+	g := s.GetGoogle()
+	if g.AccessToken != "new" {
+		t.Errorf("expected new, got %s", g.AccessToken)
+	}
+	if g.RefreshToken != "ref" {
+		t.Errorf("refresh token should be preserved, got %s", g.RefreshToken)
+	}
+}
+
+func TestUpdateGoogleAccessToken_NoToken(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "tokens.json.enc")
+	key := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	s, _ := NewStore(fp, key)
+	err := s.UpdateGoogleAccessToken(&oauth2.Token{AccessToken: "x"})
+	if err == nil {
+		t.Error("expected error when no token exists")
+	}
 }

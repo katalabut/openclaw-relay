@@ -14,6 +14,17 @@ import (
 	"google.golang.org/api/option"
 )
 
+// GmailClient is the interface for Gmail operations.
+type GmailClient interface {
+	ListMessages(ctx context.Context, query string, maxResults int64) ([]MessageMeta, error)
+	GetMessage(ctx context.Context, id string) (*MessageFull, error)
+	ModifyMessage(ctx context.Context, id string, req ModifyRequest) error
+	ListLabels(ctx context.Context) ([]LabelInfo, error)
+	GetThread(ctx context.Context, threadID string) ([]MessageFull, error)
+	GetCurrentHistoryID(ctx context.Context) (uint64, error)
+	GetHistory(ctx context.Context, startHistoryID uint64) ([]HistoryMessage, uint64, error)
+}
+
 // Client wraps Gmail API v1.
 type Client struct {
 	store    *tokens.Store

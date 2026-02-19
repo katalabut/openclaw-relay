@@ -23,14 +23,14 @@ type GmailState struct {
 
 // Poller polls Gmail for new messages using historyId.
 type Poller struct {
-	client   *Client
+	client   GmailClient
 	rules    []config.GmailRule
 	interval time.Duration
-	gateway  *gateway.Client
+	gateway  gateway.GatewayClient
 	stateDir string
 }
 
-func NewPoller(client *Client, cfg *config.GmailConfig, gw *gateway.Client, stateDir string) *Poller {
+func NewPoller(client GmailClient, cfg *config.GmailConfig, gw gateway.GatewayClient, stateDir string) *Poller {
 	interval := 60 * time.Second
 	if cfg.PollInterval != "" {
 		if d, err := time.ParseDuration(cfg.PollInterval); err == nil {

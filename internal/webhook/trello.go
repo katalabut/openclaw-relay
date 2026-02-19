@@ -19,7 +19,7 @@ import (
 
 type TrelloHandler struct {
 	Config  *config.Config
-	Gateway *gateway.Client
+	Gateway gateway.GatewayClient
 	Limiter *ratelimit.Limiter
 }
 

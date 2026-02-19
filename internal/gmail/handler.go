@@ -9,10 +9,10 @@ import (
 
 // Handler registers Gmail API HTTP handlers.
 type Handler struct {
-	client *Client
+	client GmailClient
 }
 
-func NewHandler(client *Client) *Handler {
+func NewHandler(client GmailClient) *Handler {
 	return &Handler{client: client}
 }
 

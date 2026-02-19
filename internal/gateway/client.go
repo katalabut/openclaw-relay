@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+// GatewayClient is the interface for gateway operations.
+type GatewayClient interface {
+	CreateOneShotJob(name, message string, timeoutSeconds, delaySeconds int) error
+}
+
 type Client struct {
 	URL     string
 	Token   string
