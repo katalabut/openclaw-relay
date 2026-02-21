@@ -50,16 +50,28 @@ func Run(cfg *config.Config) error {
 
 			// Gmail
 			if cfg.Gmail.Enabled {
-				gmailClient := gmail.NewClient(store, googleAuth.OAuthConfig())
-				gmailHandler := gmail.NewHandler(gmailClient)
-				gmailHandler.RegisterRoutes(mux)
+				accounts := cfg.Gmail.ResolvedAccounts(cfg.Google.AllowedEmails)
+				if len(accounts) == 0 {
+					// Fallback route support for direct API usage.
+					gmailClient := gmail.NewClient(store, googleAuth.OAuthConfig())
+					gmailHandler := gmail.NewHandler(gmailClient)
+					gmailHandler.RegisterRoutes(mux)
+					log.Println("Gmail enabled but no account rules configured")
+				} else {
+					// Register API routes using first account by default.
+					defaultClient := gmail.NewClientForAccount(store, googleAuth.OAuthConfig(), accounts[0].Email)
+					gmailHandler := gmail.NewHandler(defaultClient)
+					gmailHandler.RegisterRoutes(mux)
 
-				// Gmail poller
-				poller := gmail.NewPoller(gmailClient, &cfg.Gmail, gw, "data")
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
-				poller.Start(ctx)
-				log.Println("Gmail integration enabled")
+					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
+					for _, acc := range accounts {
+						client := gmail.NewClientForAccount(store, googleAuth.OAuthConfig(), acc.Email)
+						poller := gmail.NewPollerForAccount(client, acc.Email, acc.PollInterval, acc.Rules, gw, "data")
+						poller.Start(ctx)
+					}
+					log.Printf("Gmail integration enabled for %d account(s)", len(accounts))
+				}
 			}
 		}
 	} else {

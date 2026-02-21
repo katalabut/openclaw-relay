@@ -23,31 +23,42 @@ type GmailState struct {
 
 // Poller polls Gmail for new messages using historyId.
 type Poller struct {
-	client   GmailClient
-	rules    []config.GmailRule
-	interval time.Duration
-	gateway  gateway.GatewayClient
-	stateDir string
+	client       GmailClient
+	accountEmail string
+	rules        []config.GmailRule
+	interval     time.Duration
+	gateway      gateway.GatewayClient
+	stateDir     string
 }
 
 func NewPoller(client GmailClient, cfg *config.GmailConfig, gw gateway.GatewayClient, stateDir string) *Poller {
+	return NewPollerForAccount(client, "", cfg.PollInterval, cfg.Rules, gw, stateDir)
+}
+
+func NewPollerForAccount(client GmailClient, accountEmail, pollInterval string, rules []config.GmailRule, gw gateway.GatewayClient, stateDir string) *Poller {
 	interval := 60 * time.Second
-	if cfg.PollInterval != "" {
-		if d, err := time.ParseDuration(cfg.PollInterval); err == nil {
+	if pollInterval != "" {
+		if d, err := time.ParseDuration(pollInterval); err == nil {
 			interval = d
 		}
 	}
 	return &Poller{
-		client:   client,
-		rules:    cfg.Rules,
-		interval: interval,
-		gateway:  gw,
-		stateDir: stateDir,
+		client:       client,
+		accountEmail: accountEmail,
+		rules:        rules,
+		interval:     interval,
+		gateway:      gw,
+		stateDir:     stateDir,
 	}
 }
 
 func (p *Poller) stateFile() string {
-	return filepath.Join(p.stateDir, "gmail-state.json")
+	if p.accountEmail == "" {
+		return filepath.Join(p.stateDir, "gmail-state.json")
+	}
+	safe := strings.ReplaceAll(p.accountEmail, "/", "_")
+	safe = strings.ReplaceAll(safe, "@", "_at_")
+	return filepath.Join(p.stateDir, fmt.Sprintf("gmail-state-%s.json", safe))
 }
 
 func (p *Poller) loadState() (*GmailState, error) {
@@ -68,7 +79,7 @@ func (p *Poller) saveState(s *GmailState) error {
 // Start begins polling in a goroutine. Cancel ctx to stop.
 func (p *Poller) Start(ctx context.Context) {
 	go func() {
-		log.Printf("Gmail poller starting (interval: %s, rules: %d)", p.interval, len(p.rules))
+		log.Printf("Gmail poller starting (account: %q, interval: %s, rules: %d)", p.accountEmail, p.interval, len(p.rules))
 
 		// Initialize historyId if needed
 		state, err := p.loadState()

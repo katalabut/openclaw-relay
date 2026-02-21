@@ -32,7 +32,7 @@ type GoogleAuth struct {
 	allowedEmails map[string]bool
 	store         *tokens.Store
 	mu            sync.Mutex
-	stateToken    string
+	stateToEmail  map[string]string
 }
 
 func NewGoogleAuth(cfg *config.GoogleConfig, store *tokens.Store) *GoogleAuth {
@@ -50,6 +50,7 @@ func NewGoogleAuth(cfg *config.GoogleConfig, store *tokens.Store) *GoogleAuth {
 		},
 		allowedEmails: allowed,
 		store:         store,
+		stateToEmail:  map[string]string{},
 	}
 }
 
@@ -58,19 +59,36 @@ func (g *GoogleAuth) OAuthConfig() *oauth2.Config {
 	return g.oauthCfg
 }
 
-func (g *GoogleAuth) generateState() string {
+func (g *GoogleAuth) generateState(requestedEmail ...string) string {
 	b := make([]byte, 16)
 	rand.Read(b)
+	state := hex.EncodeToString(b)
+	email := ""
+	if len(requestedEmail) > 0 {
+		email = requestedEmail[0]
+	}
 	g.mu.Lock()
-	g.stateToken = hex.EncodeToString(b)
+	g.stateToEmail[state] = email
 	g.mu.Unlock()
-	return g.stateToken
+	return state
 }
 
+func (g *GoogleAuth) consumeState(state string) (string, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	email, ok := g.stateToEmail[state]
+	if ok {
+		delete(g.stateToEmail, state)
+	}
+	return email, ok
+}
+
+// verifyState keeps backward-compatible behavior for tests.
 func (g *GoogleAuth) verifyState(state string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.stateToken != "" && g.stateToken == state
+	_, ok := g.stateToEmail[state]
+	return ok
 }
 
 // RegisterRoutes adds OAuth routes to the mux.
@@ -87,28 +105,38 @@ func (g *GoogleAuth) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	gt := g.store.GetGoogle()
-	if gt != nil && gt.Email != "" {
-		fmt.Fprintf(w, `<!DOCTYPE html><html><body>
-<h2>✅ Authenticated as %s</h2>
-<p><a href="/auth/logout">Logout</a></p>
-</body></html>`, gt.Email)
+	accounts := g.store.ListGoogle()
+	fmt.Fprint(w, `<!DOCTYPE html><html><body><h2>openclaw-relay</h2>`)
+	if len(g.allowedEmails) == 0 {
+		fmt.Fprint(w, `<p>No allowed emails configured.</p>`)
 	} else {
-		fmt.Fprint(w, `<!DOCTYPE html><html><body>
-<h2>openclaw-relay</h2>
-<p><a href="/auth/google/login"><button>Login with Google</button></a></p>
-</body></html>`)
+		fmt.Fprint(w, `<h3>Google accounts</h3><ul>`)
+		for email := range g.allowedEmails {
+			if _, ok := accounts[email]; ok {
+				fmt.Fprintf(w, `<li>✅ %s — <a href="/auth/logout?account=%s">Logout</a></li>`, email, email)
+			} else {
+				fmt.Fprintf(w, `<li>⬜ %s — <a href="/auth/google/login?account=%s">Login</a></li>`, email, email)
+			}
+		}
+		fmt.Fprint(w, `</ul>`)
 	}
+	fmt.Fprint(w, `</body></html>`)
 }
 
 func (g *GoogleAuth) handleLogin(w http.ResponseWriter, r *http.Request) {
-	state := g.generateState()
+	account := r.URL.Query().Get("account")
+	if account != "" && !g.allowedEmails[account] {
+		http.Error(w, "account is not allowed", http.StatusForbidden)
+		return
+	}
+	state := g.generateState(account)
 	url := g.oauthCfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
 func (g *GoogleAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
-	if !g.verifyState(r.URL.Query().Get("state")) {
+	expectedEmail, ok := g.consumeState(r.URL.Query().Get("state"))
+	if !ok {
 		http.Error(w, "invalid state", http.StatusBadRequest)
 		return
 	}
@@ -141,6 +169,11 @@ func (g *GoogleAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	email := userInfo.Email
+	if expectedEmail != "" && email != expectedEmail {
+		log.Printf("OAuth email mismatch: expected=%s got=%s", expectedEmail, email)
+		http.Error(w, "authenticated with different account", http.StatusForbidden)
+		return
+	}
 	if !g.allowedEmails[email] {
 		log.Printf("Rejected email: %s", email)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -164,7 +197,8 @@ func (g *GoogleAuth) handleCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *GoogleAuth) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if err := g.store.ClearGoogle(); err != nil {
+	account := r.URL.Query().Get("account")
+	if err := g.store.ClearGoogle(account); err != nil {
 		log.Printf("Clear token error: %v", err)
 	}
 	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
@@ -172,17 +206,17 @@ func (g *GoogleAuth) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // HandleAuthStatus returns auth status as JSON (for /api/auth/status).
 func (g *GoogleAuth) HandleAuthStatus(w http.ResponseWriter, r *http.Request) {
-	gt := g.store.GetGoogle()
+	accounts := g.store.ListGoogle()
 	w.Header().Set("Content-Type", "application/json")
-	if gt == nil {
-		json.NewEncoder(w).Encode(map[string]any{"google": map[string]any{"authenticated": false}})
-		return
+	resp := map[string]any{"google": map[string]any{"authenticated": len(accounts) > 0}}
+	googleMap := resp["google"].(map[string]any)
+	list := make([]map[string]any, 0, len(accounts))
+	for _, gt := range accounts {
+		list = append(list, map[string]any{
+			"email":      gt.Email,
+			"expires_at": gt.Expiry,
+		})
 	}
-	json.NewEncoder(w).Encode(map[string]any{
-		"google": map[string]any{
-			"authenticated": true,
-			"email":         gt.Email,
-			"expires_at":    gt.Expiry,
-		},
-	})
+	googleMap["accounts"] = list
+	json.NewEncoder(w).Encode(resp)
 }

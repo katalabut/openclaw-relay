@@ -29,16 +29,24 @@ type GmailClient interface {
 type Client struct {
 	store    *tokens.Store
 	oauthCfg *oauth2.Config
+	email    string
 }
 
 func NewClient(store *tokens.Store, oauthCfg *oauth2.Config) *Client {
 	return &Client{store: store, oauthCfg: oauthCfg}
 }
 
+func NewClientForAccount(store *tokens.Store, oauthCfg *oauth2.Config, email string) *Client {
+	return &Client{store: store, oauthCfg: oauthCfg, email: email}
+}
+
 func (c *Client) getService(ctx context.Context) (*gm.Service, error) {
-	tok := c.store.GetGoogleOAuth2Token()
+	tok := c.store.GetGoogleOAuth2Token(c.email)
 	if tok == nil {
-		return nil, fmt.Errorf("not authenticated with Google")
+		if c.email == "" {
+			return nil, fmt.Errorf("not authenticated with Google")
+		}
+		return nil, fmt.Errorf("not authenticated with Google for %s", c.email)
 	}
 	ts := c.oauthCfg.TokenSource(ctx, tok)
 	// Get a fresh token (auto-refreshes if expired)
@@ -48,7 +56,7 @@ func (c *Client) getService(ctx context.Context) (*gm.Service, error) {
 	}
 	// Persist refreshed token
 	if newTok.AccessToken != tok.AccessToken {
-		if err := c.store.UpdateGoogleAccessToken(newTok); err != nil {
+		if err := c.store.UpdateGoogleAccessToken(newTok, c.email); err != nil {
 			log.Printf("Warning: failed to persist refreshed token: %v", err)
 		}
 	}

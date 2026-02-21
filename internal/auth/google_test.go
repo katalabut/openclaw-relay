@@ -111,8 +111,13 @@ func TestHandleAuthStatus_Auth(t *testing.T) {
 	if resp["google"]["authenticated"] != true {
 		t.Error("expected authenticated")
 	}
-	if resp["google"]["email"] != "test@example.com" {
-		t.Errorf("expected test@example.com, got %v", resp["google"]["email"])
+	accounts, ok := resp["google"]["accounts"].([]interface{})
+	if !ok || len(accounts) == 0 {
+		t.Fatalf("expected accounts list, got %v", resp["google"]["accounts"])
+	}
+	acc, _ := accounts[0].(map[string]interface{})
+	if acc["email"] != "test@example.com" {
+		t.Errorf("expected test@example.com, got %v", acc["email"])
 	}
 }
 

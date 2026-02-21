@@ -27,6 +27,8 @@ type GoogleToken struct {
 
 // TokenData is the top-level structure persisted to disk.
 type TokenData struct {
+	GoogleByEmail map[string]*GoogleToken `json:"google_by_email,omitempty"`
+	// Legacy single-account field (kept for backward compatibility on load).
 	Google *GoogleToken `json:"google,omitempty"`
 }
 
@@ -92,7 +94,18 @@ func (s *Store) load() error {
 	if err != nil {
 		return fmt.Errorf("decrypt: %w", err)
 	}
-	return json.Unmarshal(plaintext, &s.data)
+	if err := json.Unmarshal(plaintext, &s.data); err != nil {
+		return err
+	}
+	if s.data.GoogleByEmail == nil {
+		s.data.GoogleByEmail = map[string]*GoogleToken{}
+	}
+	// Migrate legacy single-account payload on first load.
+	if s.data.Google != nil && s.data.Google.Email != "" {
+		s.data.GoogleByEmail[s.data.Google.Email] = s.data.Google
+		s.data.Google = nil
+	}
+	return nil
 }
 
 func (s *Store) save() error {
@@ -110,30 +123,55 @@ func (s *Store) save() error {
 	return os.WriteFile(s.filePath, encrypted, 0600)
 }
 
-// SaveGoogle stores a Google OAuth token.
+// SaveGoogle stores a Google OAuth token for a specific email account.
 func (s *Store) SaveGoogle(token *oauth2.Token, email string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data.Google = &GoogleToken{
+	if s.data.GoogleByEmail == nil {
+		s.data.GoogleByEmail = map[string]*GoogleToken{}
+	}
+	s.data.GoogleByEmail[email] = &GoogleToken{
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
 		TokenType:    token.TokenType,
 		Expiry:       token.Expiry,
 		Email:        email,
 	}
+	s.data.Google = nil
 	return s.save()
 }
 
-// GetGoogle returns the stored Google token, or nil.
-func (s *Store) GetGoogle() *GoogleToken {
+// GetGoogle returns a stored Google token by email, or nil.
+func (s *Store) GetGoogle(email ...string) *GoogleToken {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.data.Google
+	account := ""
+	if len(email) > 0 {
+		account = email[0]
+	}
+	if account == "" {
+		for _, t := range s.data.GoogleByEmail {
+			return t
+		}
+		return nil
+	}
+	return s.data.GoogleByEmail[account]
 }
 
-// GetGoogleOAuth2Token converts to oauth2.Token.
-func (s *Store) GetGoogleOAuth2Token() *oauth2.Token {
-	g := s.GetGoogle()
+// ListGoogle returns all stored Google tokens keyed by email.
+func (s *Store) ListGoogle() map[string]*GoogleToken {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]*GoogleToken, len(s.data.GoogleByEmail))
+	for k, v := range s.data.GoogleByEmail {
+		out[k] = v
+	}
+	return out
+}
+
+// GetGoogleOAuth2Token converts a stored account token to oauth2.Token.
+func (s *Store) GetGoogleOAuth2Token(email ...string) *oauth2.Token {
+	g := s.GetGoogle(email...)
 	if g == nil {
 		return nil
 	}
@@ -146,24 +184,47 @@ func (s *Store) GetGoogleOAuth2Token() *oauth2.Token {
 }
 
 // UpdateGoogleAccessToken updates just the access token and expiry (after refresh).
-func (s *Store) UpdateGoogleAccessToken(token *oauth2.Token) error {
+func (s *Store) UpdateGoogleAccessToken(token *oauth2.Token, email ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.data.Google == nil {
+	if s.data.GoogleByEmail == nil {
+		s.data.GoogleByEmail = map[string]*GoogleToken{}
+	}
+	account := ""
+	if len(email) > 0 {
+		account = email[0]
+	}
+	if account == "" {
+		for k := range s.data.GoogleByEmail {
+			account = k
+			break
+		}
+	}
+	g := s.data.GoogleByEmail[account]
+	if g == nil {
 		return fmt.Errorf("no google token to update")
 	}
-	s.data.Google.AccessToken = token.AccessToken
-	s.data.Google.Expiry = token.Expiry
+	g.AccessToken = token.AccessToken
+	g.Expiry = token.Expiry
 	if token.RefreshToken != "" {
-		s.data.Google.RefreshToken = token.RefreshToken
+		g.RefreshToken = token.RefreshToken
 	}
 	return s.save()
 }
 
-// ClearGoogle removes stored Google tokens.
-func (s *Store) ClearGoogle() error {
+// ClearGoogle removes stored Google token for one account (or all when email empty).
+func (s *Store) ClearGoogle(email ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data.Google = nil
+	account := ""
+	if len(email) > 0 {
+		account = email[0]
+	}
+	if account == "" {
+		s.data.GoogleByEmail = map[string]*GoogleToken{}
+		s.data.Google = nil
+		return s.save()
+	}
+	delete(s.data.GoogleByEmail, account)
 	return s.save()
 }
