@@ -223,7 +223,7 @@ func (p *Poller) executeNotify(_ context.Context, notify *config.GmailNotifyActi
 	jobMsg := fmt.Sprintf("Send this exact message to Telegram (target=%s, channel=%s). Just send it, no extra text:\n\n%s",
 		notify.Target, notify.Channel, message)
 
-	if err := p.gateway.CreateOneShotJob("gmail-notify", jobMsg, 30, 0); err != nil {
+	if err := p.gateway.CreateOneShotJobForAgent("gmail-notify", jobMsg, notify.AgentID, 30, 0); err != nil {
 		log.Printf("Gmail notify: failed to create gateway job: %v", err)
 	}
 }

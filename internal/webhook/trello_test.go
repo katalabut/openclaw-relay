@@ -31,6 +31,11 @@ func (m *mockGateway) CreateOneShotJob(name, message string, timeoutSeconds, del
 	return nil
 }
 
+func (m *mockGateway) CreateOneShotJobForAgent(name, message, agentID string, timeoutSeconds, delaySeconds int) error {
+	m.calls = append(m.calls, mockGatewayCall{name, message, timeoutSeconds, delaySeconds})
+	return nil
+}
+
 func TestVerifyTrelloSignature(t *testing.T) {
 	if !VerifyTrelloSignature([]byte("body"), "sig", "", "url") {
 		t.Error("empty secret should pass")

@@ -50,6 +50,7 @@ type GmailNotifyAction struct {
 	Target   string `yaml:"target"`
 	Channel  string `yaml:"channel"`
 	Template string `yaml:"template"`
+	AgentID  string `yaml:"agent_id"` // optional: which agent sends the notification (default: global)
 }
 
 type ServerConfig struct {
@@ -79,6 +80,7 @@ type RuleAction struct {
 	Kind            string `yaml:"kind"`
 	Timeout         int    `yaml:"timeout"`
 	Delay           int    `yaml:"delay"`
+	AgentID         string `yaml:"agent_id"`
 	MessageTemplate string `yaml:"message_template"`
 }
 

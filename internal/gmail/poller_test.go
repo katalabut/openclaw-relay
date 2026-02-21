@@ -96,6 +96,11 @@ func (m *mockGW) CreateOneShotJob(name, message string, timeout, delay int) erro
 	return nil
 }
 
+func (m *mockGW) CreateOneShotJobForAgent(name, message, agentID string, timeout, delay int) error {
+	m.calls = append(m.calls, name)
+	return nil
+}
+
 func TestNewPoller(t *testing.T) {
 	cfg := &config.GmailConfig{
 		PollInterval: "30s",

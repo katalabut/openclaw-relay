@@ -169,7 +169,7 @@ func (h *TrelloHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	eventName := fmt.Sprintf("%s: %s", eventType, cardName)
-	if err := h.Gateway.CreateOneShotJob(eventName, msg, timeout, delay); err != nil {
+	if err := h.Gateway.CreateOneShotJobForAgent(eventName, msg, rule.Action.AgentID, timeout, delay); err != nil {
 		log.Printf("Failed to create job: %v", err)
 	}
 

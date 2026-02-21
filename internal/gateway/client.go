@@ -13,7 +13,12 @@ import (
 
 // GatewayClient is the interface for gateway operations.
 type GatewayClient interface {
+	// CreateOneShotJob creates a one-shot cron job for the default agent.
+	// Use CreateOneShotJobForAgent to target a specific agent.
 	CreateOneShotJob(name, message string, timeoutSeconds, delaySeconds int) error
+	// CreateOneShotJobForAgent creates a one-shot cron job targeting a specific agent.
+	// If agentID is empty, falls back to the client's default agent.
+	CreateOneShotJobForAgent(name, message, agentID string, timeoutSeconds, delaySeconds int) error
 }
 
 type Client struct {
@@ -33,9 +38,17 @@ func NewClient(url, token, agentID string) *Client {
 }
 
 func (c *Client) CreateOneShotJob(name, message string, timeoutSeconds, delaySeconds int) error {
+	return c.CreateOneShotJobForAgent(name, message, "", timeoutSeconds, delaySeconds)
+}
+
+func (c *Client) CreateOneShotJobForAgent(name, message, agentID string, timeoutSeconds, delaySeconds int) error {
 	if c.URL == "" || c.Token == "" {
 		log.Printf("Gateway not configured, skipping job creation for: %s", name)
 		return nil
+	}
+
+	if agentID == "" {
+		agentID = c.AgentID
 	}
 
 	fireAt := time.Now().Add(time.Duration(delaySeconds) * time.Second)
@@ -43,7 +56,7 @@ func (c *Client) CreateOneShotJob(name, message string, timeoutSeconds, delaySec
 		"action": "add",
 		"job": map[string]interface{}{
 			"name":          fmt.Sprintf("webhook: %s", name),
-			"agentId":       c.AgentID,
+			"agentId":       agentID,
 			"sessionTarget": "isolated",
 			"enabled":       true,
 			"schedule": map[string]interface{}{
@@ -67,7 +80,7 @@ func (c *Client) CreateOneShotJob(name, message string, timeoutSeconds, delaySec
 	reqBody := map[string]interface{}{
 		"tool":       "cron",
 		"args":       json.RawMessage(body),
-		"sessionKey": fmt.Sprintf("agent:%s:main", c.AgentID),
+		"sessionKey": fmt.Sprintf("agent:%s:main", agentID),
 	}
 	reqJSON, _ := json.Marshal(reqBody)
 
@@ -89,6 +102,6 @@ func (c *Client) CreateOneShotJob(name, message string, timeoutSeconds, delaySec
 		return fmt.Errorf("gateway returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	log.Printf("One-shot job created: %s", name)
+	log.Printf("One-shot job created for agent=%s: %s", agentID, name)
 	return nil
 }
