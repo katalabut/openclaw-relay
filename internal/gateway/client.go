@@ -51,28 +51,39 @@ func (c *Client) CreateOneShotJobForAgent(name, message, agentID string, timeout
 		agentID = c.AgentID
 	}
 
+	// Resolve effective agent for sessionKey (cron context)
+	effectiveAgent := agentID
+	if effectiveAgent == "" {
+		effectiveAgent = c.AgentID
+	}
+
 	fireAt := time.Now().Add(time.Duration(delaySeconds) * time.Second)
+	job := map[string]interface{}{
+		"name":          fmt.Sprintf("webhook: %s", name),
+		"sessionTarget": "isolated",
+		"enabled":       true,
+		"schedule": map[string]interface{}{
+			"kind": "at",
+			"at":   fireAt.UTC().Format(time.RFC3339),
+		},
+		"payload": map[string]interface{}{
+			"kind":           "agentTurn",
+			"message":        message,
+			"model":          "anthropic/claude-sonnet-4-6",
+			"timeoutSeconds": timeoutSeconds,
+		},
+		"delivery": map[string]interface{}{
+			"mode": "none",
+		},
+	}
+	// Only set agentId if explicitly provided; gateway uses its default otherwise
+	if agentID != "" {
+		job["agentId"] = agentID
+	}
+
 	payload := map[string]interface{}{
 		"action": "add",
-		"job": map[string]interface{}{
-			"name":          fmt.Sprintf("webhook: %s", name),
-			"agentId":       agentID,
-			"sessionTarget": "isolated",
-			"enabled":       true,
-			"schedule": map[string]interface{}{
-				"kind": "at",
-				"at":   fireAt.UTC().Format(time.RFC3339),
-			},
-			"payload": map[string]interface{}{
-				"kind":           "agentTurn",
-				"message":        message,
-				"model":          "anthropic/claude-sonnet-4-6",
-				"timeoutSeconds": timeoutSeconds,
-			},
-			"delivery": map[string]interface{}{
-				"mode": "none",
-			},
-		},
+		"job":    job,
 	}
 
 	body, _ := json.Marshal(payload)
@@ -80,7 +91,7 @@ func (c *Client) CreateOneShotJobForAgent(name, message, agentID string, timeout
 	reqBody := map[string]interface{}{
 		"tool":       "cron",
 		"args":       json.RawMessage(body),
-		"sessionKey": fmt.Sprintf("agent:%s:main", agentID),
+		"sessionKey": fmt.Sprintf("agent:%s:main", effectiveAgent),
 	}
 	reqJSON, _ := json.Marshal(reqBody)
 
