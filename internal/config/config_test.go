@@ -69,8 +69,8 @@ func TestLoad_DefaultValues(t *testing.T) {
 	if cfg.Server.Port != 8080 {
 		t.Errorf("default port = %d, want 8080", cfg.Server.Port)
 	}
-	if cfg.Gateway.AgentID != "work" {
-		t.Errorf("default agentID = %s, want work", cfg.Gateway.AgentID)
+	if cfg.Gateway.AgentID != "main" {
+		t.Errorf("default agentID = %s, want main", cfg.Gateway.AgentID)
 	}
 	if cfg.Audit.LogPath != "data/audit.log" {
 		t.Errorf("default audit path = %s", cfg.Audit.LogPath)

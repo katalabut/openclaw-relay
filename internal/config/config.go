@@ -118,7 +118,7 @@ func Load(path string) (*Config, error) {
 		cfg.Server.Port = 8080
 	}
 	if cfg.Gateway.AgentID == "" {
-		cfg.Gateway.AgentID = "work"
+		cfg.Gateway.AgentID = "main"
 	}
 	if cfg.Audit.LogPath == "" {
 		cfg.Audit.LogPath = "data/audit.log"
