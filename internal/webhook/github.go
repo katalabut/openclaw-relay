@@ -118,7 +118,25 @@ func (h *GitHubHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		prNumber = payload.WorkflowRun.PullRequests[0].Number
 	}
 
-	key := fmt.Sprintf("github:%s:%d", ghEvent, prNumber)
+	conclusion := "n/a"
+	switch ghEvent {
+	case "check_run":
+		conclusion = payload.CheckRun.Conclusion
+	case "workflow_run":
+		conclusion = payload.WorkflowRun.Conclusion
+	}
+
+	if h.Config.GitHub.NotifyMode == "failures" {
+		isFailure := conclusion == "failure" || conclusion == "timed_out" || conclusion == "cancelled" || conclusion == "action_required"
+		if (ghEvent == "check_run" || ghEvent == "workflow_run") && !isFailure {
+			log.Printf("GitHub: skipping non-failure event (%s conclusion=%s)", ghEvent, conclusion)
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"ok":true}`))
+			return
+		}
+	}
+
+	key := fmt.Sprintf("github:%s:%d:%s", ghEvent, prNumber, conclusion)
 	if !h.Limiter.Allow(key) {
 		log.Printf("GitHub: rate limited %s PR#%d", ghEvent, prNumber)
 		w.WriteHeader(http.StatusOK)
@@ -133,6 +151,7 @@ func (h *GitHubHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 Source: github
 Event: %s
 Action: %s
+Conclusion: %s
 Repository: %s
 PR: #%d
 
@@ -142,7 +161,7 @@ Check if any card with label 'AI Review' (or in In Progress) has a PR matching t
 If CI completed (success/failure) — check state.json for the card, act accordingly.
 If PR review submitted — process review comments.
 Telegram notifications: target=46075872, channel=telegram.
-If nothing actionable, exit silently.`, ghEvent, payload.Action, payload.Repository.FullName, prNumber)
+If nothing actionable, exit silently.`, ghEvent, payload.Action, conclusion, payload.Repository.FullName, prNumber)
 
 	if err := h.Gateway.CreateOneShotJob(eventName, msg, 120, 2); err != nil {
 		log.Printf("Failed to create job: %v", err)

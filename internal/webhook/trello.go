@@ -151,12 +151,12 @@ func (h *TrelloHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Render message
 	msg := h.renderMessage(rule.Action.MessageTemplate, map[string]string{
-		"CardID":        cardID,
-		"CardName":      cardName,
-		"ListAfterID":   listAfterID,
-		"ListAfterName": listAfterName,
+		"CardID":         cardID,
+		"CardName":       cardName,
+		"ListAfterID":    listAfterID,
+		"ListAfterName":  listAfterName,
 		"ListBeforeName": listBeforeName,
-		"ListName":      listAfterName,
+		"ListName":       listAfterName,
 	})
 
 	timeout := rule.Action.Timeout

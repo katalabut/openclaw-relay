@@ -149,6 +149,7 @@ trello:
 # GitHub webhook configuration
 github:
   secret: "${GITHUB_WEBHOOK_SECRET}"      # HMAC secret for SHA-256 verification
+  notify_mode: "all"                       # all | failures (for completed CI events)
 
 # Google OAuth (required for Gmail)
 google:

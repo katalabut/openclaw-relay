@@ -47,7 +47,7 @@ func TestVerifyGitHubSignature_NoPrefix(t *testing.T) {
 
 func newTestGitHubHandler(gw *mockGateway) *GitHubHandler {
 	cfg := &config.Config{
-		GitHub: config.GitHubConfig{Secret: ""},
+		GitHub: config.GitHubConfig{Secret: "", NotifyMode: "all"},
 	}
 	return &GitHubHandler{
 		Config:  cfg,
@@ -154,7 +154,7 @@ func TestServeHTTP_GitHub_CheckRunCompleted(t *testing.T) {
 	h := newTestGitHubHandler(gw)
 
 	payload := map[string]interface{}{
-		"action": "completed",
+		"action":     "completed",
 		"repository": map[string]string{"full_name": "user/repo"},
 		"check_run": map[string]interface{}{
 			"conclusion":    "success",
@@ -274,5 +274,65 @@ func TestServeHTTP_GitHub_MethodNotAllowed(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", rec.Code)
+	}
+}
+
+func TestServeHTTP_GitHub_NotifyFailures_SkipsSuccessWorkflow(t *testing.T) {
+	gw := &mockGateway{}
+	h := newTestGitHubHandler(gw)
+	h.Config.GitHub.NotifyMode = "failures"
+
+	payload := map[string]interface{}{
+		"action": "completed",
+		"repository": map[string]string{
+			"full_name": "user/repo",
+		},
+		"workflow_run": map[string]interface{}{
+			"conclusion":    "success",
+			"pull_requests": []map[string]interface{}{{"number": 11}},
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest("POST", "/webhook/github", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "workflow_run")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if len(gw.calls) != 0 {
+		t.Fatalf("expected 0 gateway calls for success in failures mode, got %d", len(gw.calls))
+	}
+}
+
+func TestServeHTTP_GitHub_NotifyFailures_AllowsFailureWorkflow(t *testing.T) {
+	gw := &mockGateway{}
+	h := newTestGitHubHandler(gw)
+	h.Config.GitHub.NotifyMode = "failures"
+
+	payload := map[string]interface{}{
+		"action": "completed",
+		"repository": map[string]string{
+			"full_name": "user/repo",
+		},
+		"workflow_run": map[string]interface{}{
+			"conclusion":    "failure",
+			"pull_requests": []map[string]interface{}{{"number": 12}},
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest("POST", "/webhook/github", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "workflow_run")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if len(gw.calls) != 1 {
+		t.Fatalf("expected 1 gateway call for failure in failures mode, got %d", len(gw.calls))
 	}
 }
