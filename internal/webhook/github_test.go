@@ -154,7 +154,7 @@ func TestServeHTTP_GitHub_CheckRunCompleted(t *testing.T) {
 	h := newTestGitHubHandler(gw)
 
 	payload := map[string]interface{}{
-		"action": "completed",
+		"action":     "completed",
 		"repository": map[string]string{"full_name": "user/repo"},
 		"check_run": map[string]interface{}{
 			"conclusion":    "success",
@@ -288,7 +288,7 @@ func TestServeHTTP_GitHub_NotifyFailures_SkipsSuccessWorkflow(t *testing.T) {
 			"full_name": "user/repo",
 		},
 		"workflow_run": map[string]interface{}{
-			"conclusion": "success",
+			"conclusion":    "success",
 			"pull_requests": []map[string]interface{}{{"number": 11}},
 		},
 	}
@@ -318,7 +318,7 @@ func TestServeHTTP_GitHub_NotifyFailures_AllowsFailureWorkflow(t *testing.T) {
 			"full_name": "user/repo",
 		},
 		"workflow_run": map[string]interface{}{
-			"conclusion": "failure",
+			"conclusion":    "failure",
 			"pull_requests": []map[string]interface{}{{"number": 12}},
 		},
 	}

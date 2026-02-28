@@ -38,9 +38,9 @@ type GmailAccountConf struct {
 }
 
 type GmailRule struct {
-	Name   string         `yaml:"name"`
-	Match  GmailMatch     `yaml:"match"`
-	Action GmailAction    `yaml:"action"`
+	Name   string      `yaml:"name"`
+	Match  GmailMatch  `yaml:"match"`
+	Action GmailAction `yaml:"action"`
 }
 
 type GmailMatch struct {
