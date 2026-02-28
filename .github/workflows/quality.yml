@@ -1,0 +1,65 @@
+name: Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, dev]
+  workflow_dispatch:
+
+jobs:
+  quality-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: go mod download
+
+  quality-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: gofmt check
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Files not formatted:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+      - run: go vet ./...
+
+  quality-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "N/A for Go (type checks are covered by build/test)"
+
+  quality-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: go test ./... -coverprofile=coverage.out
+      - name: Check coverage >= 70%
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep '^total' | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: $COVERAGE%"
+          if awk "BEGIN {exit !($COVERAGE < 70)}"; then
+            echo "ERROR: Coverage $COVERAGE% is below 70%"
+            exit 1
+          fi
+
+  quality-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: go build ./cmd/relay

@@ -92,7 +92,8 @@ type RuleAction struct {
 }
 
 type GitHubConfig struct {
-	Secret string `yaml:"secret"`
+	Secret     string `yaml:"secret"`
+	NotifyMode string `yaml:"notify_mode"` // all | failures
 }
 
 type AuditConfig struct {
@@ -129,6 +130,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Audit.LogPath == "" {
 		cfg.Audit.LogPath = "data/audit.log"
+	}
+	if cfg.GitHub.NotifyMode == "" {
+		cfg.GitHub.NotifyMode = "all"
 	}
 	return &cfg, nil
 }
