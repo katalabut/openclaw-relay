@@ -52,7 +52,7 @@ func Run(cfg *config.Config) error {
 		if err != nil {
 			log.Printf("Warning: token store init failed: %v", err)
 		} else {
-			googleAuth = auth.NewGoogleAuth(ctx, &cfg.Google, store)
+			googleAuth = auth.NewGoogleAuth(ctx, &cfg.Google, store, encKey, cfg)
 			googleAuth.RegisterRoutes(mux)
 
 			// Auth status API

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func newTestGoogleAuth(t *testing.T) (*GoogleAuth, *tokens.Store) {
 		RedirectURL:   "http://localhost/auth/google/callback",
 		AllowedEmails: []string{"test@example.com"},
 	}
-	ga := NewGoogleAuth(context.Background(), cfg, store)
+	ga := NewGoogleAuth(context.Background(), cfg, store, testKey, nil)
 	return ga, store
 }
 
@@ -62,8 +63,8 @@ func TestHandleRoot_NotAuthenticated(t *testing.T) {
 		t.Errorf("expected 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if body == "" {
-		t.Error("expected HTML body")
+	if !strings.Contains(body, "Sign in with Google") {
+		t.Error("expected login page with Sign in button")
 	}
 }
 
@@ -75,12 +76,25 @@ func TestHandleRoot_Authenticated(t *testing.T) {
 	mux := http.NewServeMux()
 	ga.RegisterRoutes(mux)
 
+	// Create a session cookie
+	rec0 := httptest.NewRecorder()
+	setSessionCookie(rec0, "test@example.com", testKey)
+	sessionCookie := rec0.Result().Cookies()[0]
+
 	req := httptest.NewRequest("GET", "/", nil)
+	req.AddCookie(sessionCookie)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != 200 {
 		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "test@example.com") {
+		t.Error("expected dashboard with user email")
+	}
+	if !strings.Contains(body, "Google Accounts") {
+		t.Error("expected Google Accounts section")
 	}
 }
 
@@ -194,11 +208,28 @@ func TestHandleCallback_ExchangeError(t *testing.T) {
 	}
 }
 
-func TestHandleLogout(t *testing.T) {
+func TestHandleLogout_Account(t *testing.T) {
 	ga, store := newTestGoogleAuth(t)
 	tok := &oauth2.Token{AccessToken: "a", RefreshToken: "r", Expiry: time.Now().Add(time.Hour)}
 	store.SaveGoogle(tok, "test@example.com")
 
+	mux := http.NewServeMux()
+	ga.RegisterRoutes(mux)
+
+	req := httptest.NewRequest("GET", "/auth/logout?account=test@example.com", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTemporaryRedirect {
+		t.Errorf("expected 307, got %d", rec.Code)
+	}
+	if store.GetGoogle() != nil {
+		t.Error("expected token cleared after account logout")
+	}
+}
+
+func TestHandleLogout_Session(t *testing.T) {
+	ga, _ := newTestGoogleAuth(t)
 	mux := http.NewServeMux()
 	ga.RegisterRoutes(mux)
 
@@ -209,8 +240,16 @@ func TestHandleLogout(t *testing.T) {
 	if rec.Code != http.StatusTemporaryRedirect {
 		t.Errorf("expected 307, got %d", rec.Code)
 	}
-	if store.GetGoogle() != nil {
-		t.Error("expected token cleared after logout")
+	// Should clear session cookie
+	cookies := rec.Result().Cookies()
+	found := false
+	for _, c := range cookies {
+		if c.Name == sessionCookieName && c.MaxAge == -1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected session cookie to be cleared")
 	}
 }
 
