@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -118,5 +119,125 @@ func TestEnvSubst_UnsetVar(t *testing.T) {
 	result := envSubst("${UNSET_VAR_XYZ}")
 	if result != "${UNSET_VAR_XYZ}" {
 		t.Errorf("unset var should remain as-is, got %s", result)
+	}
+}
+
+func TestValidate_GatewayRequired(t *testing.T) {
+	cfg := &Config{
+		Trello: TrelloConfig{Rules: []TrelloRule{{Event: "card_moved"}}},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for missing gateway URL")
+	}
+	if !strings.Contains(err.Error(), "gateway.url") {
+		t.Errorf("expected gateway.url error, got: %v", err)
+	}
+}
+
+func TestValidate_GmailEmailEmpty(t *testing.T) {
+	cfg := &Config{
+		Gateway: GatewayConfig{URL: "http://localhost"},
+		Gmail: GmailConfig{
+			Enabled:  true,
+			Accounts: []GmailAccountConf{{Email: ""}},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for empty gmail email")
+	}
+	if !strings.Contains(err.Error(), "must not be empty") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_GmailEmailNotAllowed(t *testing.T) {
+	cfg := &Config{
+		Gateway: GatewayConfig{URL: "http://localhost"},
+		Google:  GoogleConfig{AllowedEmails: []string{"allowed@test.com"}},
+		Gmail: GmailConfig{
+			Enabled:  true,
+			Accounts: []GmailAccountConf{{Email: "other@test.com"}},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for gmail email not in allowed list")
+	}
+	if !strings.Contains(err.Error(), "not in google.allowed_emails") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_OK(t *testing.T) {
+	cfg := &Config{
+		Server:  ServerConfig{InternalToken: "tok"},
+		Gateway: GatewayConfig{URL: "http://localhost"},
+		Google:  GoogleConfig{AllowedEmails: []string{"test@test.com"}},
+		Gmail: GmailConfig{
+			Enabled:  true,
+			Accounts: []GmailAccountConf{{Email: "test@test.com"}},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidate_NoRules_NoGateway(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("no rules + no gateway should be valid: %v", err)
+	}
+}
+
+func TestDefaultGitHubMessageTemplate(t *testing.T) {
+	tmpl := DefaultGitHubMessageTemplate()
+	if !strings.Contains(tmpl, "{{.Event}}") {
+		t.Error("expected {{.Event}} in default template")
+	}
+	if !strings.Contains(tmpl, "{{.Repository}}") {
+		t.Error("expected {{.Repository}} in default template")
+	}
+}
+
+func TestGitHubConfig_Fields(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte(`
+github:
+  secret: "mysecret"
+  agent_id: "work"
+  message_template: "Custom: {{.Event}}"
+`), 0644)
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitHub.AgentID != "work" {
+		t.Errorf("expected agent_id work, got %s", cfg.GitHub.AgentID)
+	}
+	if cfg.GitHub.MessageTemplate != "Custom: {{.Event}}" {
+		t.Errorf("expected custom template, got %q", cfg.GitHub.MessageTemplate)
+	}
+}
+
+func TestGatewayConfig_Model(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	os.WriteFile(cfgPath, []byte(`
+gateway:
+  url: "http://localhost"
+  model: "my-model"
+`), 0644)
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Gateway.Model != "my-model" {
+		t.Errorf("expected my-model, got %s", cfg.Gateway.Model)
 	}
 }

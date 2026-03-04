@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"context"
 	"time"
 
 	"github.com/katalabut/openclaw-relay/internal/config"
@@ -118,7 +119,7 @@ func newTestTrelloHandler(gw *mockGateway) *TrelloHandler {
 	return &TrelloHandler{
 		Config:  cfg,
 		Gateway: gw,
-		Limiter: ratelimit.New(5 * time.Minute),
+		Limiter: ratelimit.New(context.Background(), 5*time.Minute),
 	}
 }
 

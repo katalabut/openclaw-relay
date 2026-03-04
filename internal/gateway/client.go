@@ -25,14 +25,19 @@ type Client struct {
 	URL     string
 	Token   string
 	AgentID string
+	Model   string
 	HTTP    *http.Client
 }
 
-func NewClient(url, token, agentID string) *Client {
+func NewClient(url, token, agentID, model string) *Client {
+	if model == "" {
+		model = "anthropic/claude-sonnet-4-6"
+	}
 	return &Client{
 		URL:     strings.TrimRight(url, "/"),
 		Token:   token,
 		AgentID: agentID,
+		Model:   model,
 		HTTP:    &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -51,12 +56,6 @@ func (c *Client) CreateOneShotJobForAgent(name, message, agentID string, timeout
 		agentID = c.AgentID
 	}
 
-	// Resolve effective agent for sessionKey (cron context)
-	effectiveAgent := agentID
-	if effectiveAgent == "" {
-		effectiveAgent = c.AgentID
-	}
-
 	fireAt := time.Now().Add(time.Duration(delaySeconds) * time.Second)
 	job := map[string]interface{}{
 		"name":          fmt.Sprintf("webhook: %s", name),
@@ -69,7 +68,7 @@ func (c *Client) CreateOneShotJobForAgent(name, message, agentID string, timeout
 		"payload": map[string]interface{}{
 			"kind":           "agentTurn",
 			"message":        message,
-			"model":          "anthropic/claude-sonnet-4-6",
+			"model":          c.Model,
 			"timeoutSeconds": timeoutSeconds,
 		},
 		"delivery": map[string]interface{}{
@@ -91,10 +90,34 @@ func (c *Client) CreateOneShotJobForAgent(name, message, agentID string, timeout
 	reqBody := map[string]interface{}{
 		"tool":       "cron",
 		"args":       json.RawMessage(body),
-		"sessionKey": fmt.Sprintf("agent:%s:main", effectiveAgent),
+		"sessionKey": fmt.Sprintf("agent:%s:main", agentID),
 	}
 	reqJSON, _ := json.Marshal(reqBody)
 
+	var lastErr error
+	backoffs := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
+
+	for attempt := 0; attempt <= len(backoffs); attempt++ {
+		if attempt > 0 {
+			log.Printf("Gateway retry %d/%d for: %s", attempt, len(backoffs), name)
+			time.Sleep(backoffs[attempt-1])
+		}
+
+		lastErr = c.doRequest(reqJSON, agentID, name)
+		if lastErr == nil {
+			return nil
+		}
+
+		// Don't retry on 4xx errors
+		if isClientError(lastErr) {
+			return lastErr
+		}
+	}
+
+	return fmt.Errorf("gateway request failed after %d attempts: %w", len(backoffs)+1, lastErr)
+}
+
+func (c *Client) doRequest(reqJSON []byte, agentID, name string) error {
 	req, err := http.NewRequest("POST", c.URL+"/tools/invoke", bytes.NewReader(reqJSON))
 	if err != nil {
 		return err
@@ -104,15 +127,51 @@ func (c *Client) CreateOneShotJobForAgent(name, message, agentID string, timeout
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("gateway request failed: %w", err)
+		return &networkError{err: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("gateway returned %d: %s", resp.StatusCode, string(respBody))
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		return &clientError{status: resp.StatusCode, body: string(respBody)}
+	}
+	if resp.StatusCode >= 500 {
+		return &serverError{status: resp.StatusCode, body: string(respBody)}
 	}
 
 	log.Printf("One-shot job created for agent=%s: %s", agentID, name)
 	return nil
+}
+
+type networkError struct {
+	err error
+}
+
+func (e *networkError) Error() string {
+	return fmt.Sprintf("gateway network error: %v", e.err)
+}
+
+func (e *networkError) Unwrap() error { return e.err }
+
+type clientError struct {
+	status int
+	body   string
+}
+
+func (e *clientError) Error() string {
+	return fmt.Sprintf("gateway returned %d: %s", e.status, e.body)
+}
+
+type serverError struct {
+	status int
+	body   string
+}
+
+func (e *serverError) Error() string {
+	return fmt.Sprintf("gateway returned %d: %s", e.status, e.body)
+}
+
+func isClientError(err error) bool {
+	_, ok := err.(*clientError)
+	return ok
 }

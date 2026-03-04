@@ -29,22 +29,35 @@ type Poller struct {
 	interval     time.Duration
 	gateway      gateway.GatewayClient
 	stateDir     string
+
+	// auth failure tracking
+	lastAuthErr     time.Time
+	authAlertCfg    *config.GmailAuthAlertConfig
+	authErrCooldown time.Duration
 }
 
-func NewPollerForAccount(client GmailClient, accountEmail, pollInterval string, rules []config.GmailRule, gw gateway.GatewayClient, stateDir string) *Poller {
+func NewPollerForAccount(client GmailClient, accountEmail, pollInterval string, rules []config.GmailRule, gw gateway.GatewayClient, stateDir string, authAlert *config.GmailAuthAlertConfig) *Poller {
 	interval := 60 * time.Second
 	if pollInterval != "" {
 		if d, err := time.ParseDuration(pollInterval); err == nil {
 			interval = d
 		}
 	}
+	cooldown := 30 * time.Minute
+	if authAlert != nil && authAlert.Cooldown != "" {
+		if d, err := time.ParseDuration(authAlert.Cooldown); err == nil {
+			cooldown = d
+		}
+	}
 	return &Poller{
-		client:       client,
-		accountEmail: accountEmail,
-		rules:        rules,
-		interval:     interval,
-		gateway:      gw,
-		stateDir:     stateDir,
+		client:          client,
+		accountEmail:    accountEmail,
+		rules:           rules,
+		interval:        interval,
+		gateway:         gw,
+		stateDir:        stateDir,
+		authAlertCfg:    authAlert,
+		authErrCooldown: cooldown,
 	}
 }
 
@@ -81,6 +94,7 @@ func (p *Poller) Start(ctx context.Context) {
 			hid, err := p.client.GetCurrentHistoryID(ctx)
 			if err != nil {
 				log.Printf("Failed to get initial historyId: %v (will retry)", err)
+				p.handleAuthError(ctx, err)
 			} else {
 				state = &GmailState{HistoryID: hid}
 				p.saveState(state)
@@ -96,7 +110,7 @@ func (p *Poller) Start(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
-				log.Println("Gmail poller stopped")
+				log.Printf("Gmail poller stopped (account: %s)", p.accountEmail)
 				return
 			case <-ticker.C:
 				p.poll(ctx)
@@ -112,7 +126,11 @@ func (p *Poller) poll(ctx context.Context) {
 		hid, err := p.client.GetCurrentHistoryID(ctx)
 		if err != nil {
 			log.Printf("Gmail poll: can't get historyId: %v", err)
+			p.handleAuthError(ctx, err)
 			return
+		}
+		if state != nil && state.HistoryID > 0 {
+			log.Printf("Gmail poll: WARNING reinitializing from historyId %d → %d, messages in between may be lost", state.HistoryID, hid)
 		}
 		state = &GmailState{HistoryID: hid}
 		p.saveState(state)
@@ -126,11 +144,13 @@ func (p *Poller) poll(ctx context.Context) {
 			log.Printf("Gmail poll: historyId expired, resetting")
 			hid, err := p.client.GetCurrentHistoryID(ctx)
 			if err == nil {
+				log.Printf("Gmail poll: WARNING historyId reset from %d → %d, messages in between are lost", state.HistoryID, hid)
 				p.saveState(&GmailState{HistoryID: hid})
 			}
 			return
 		}
 		log.Printf("Gmail poll error: %v", err)
+		p.handleAuthError(ctx, err)
 		return
 	}
 
@@ -143,8 +163,27 @@ func (p *Poller) poll(ctx context.Context) {
 		return
 	}
 
-	log.Printf("Gmail poll: %d new messages", len(msgs))
+	// Dedup messages by ID (History API can return duplicates)
+	seen := make(map[string]bool, len(msgs))
+	unique := make([]HistoryMessage, 0, len(msgs))
 	for _, msg := range msgs {
+		if seen[msg.ID] {
+			continue
+		}
+		seen[msg.ID] = true
+		unique = append(unique, msg)
+	}
+
+	log.Printf("Gmail poll: %d new messages (%d after dedup)", len(msgs), len(unique))
+
+	for _, msg := range unique {
+		// Respect context on shutdown
+		select {
+		case <-ctx.Done():
+			log.Printf("Gmail poll: shutdown during message processing, %d messages remaining", len(unique)-len(seen))
+			return
+		default:
+		}
 		p.evaluateRules(ctx, msg)
 	}
 }
@@ -155,7 +194,9 @@ func (p *Poller) evaluateRules(ctx context.Context, msg HistoryMessage) {
 			continue
 		}
 		log.Printf("Gmail rule '%s' matched message %s: %s", rule.Name, msg.ID, msg.Subject)
-		if rule.Action.Notify != nil {
+		if rule.Action.IsCron() {
+			p.executeCronAction(ctx, rule, msg)
+		} else if rule.Action.Notify != nil {
 			p.executeNotify(ctx, rule.Action.Notify, msg)
 		}
 	}
@@ -197,37 +238,161 @@ func (p *Poller) matchRule(match config.GmailMatch, msg HistoryMessage) bool {
 	return true
 }
 
-func (p *Poller) executeNotify(_ context.Context, notify *config.GmailNotifyAction, msg HistoryMessage) {
+func (p *Poller) templateData(msg HistoryMessage) map[string]string {
+	return map[string]string{
+		"From":         msg.From,
+		"Subject":      msg.Subject,
+		"Snippet":      msg.Snippet,
+		"ID":           msg.ID,
+		"MessageID":    msg.ID,
+		"ThreadID":     msg.ThreadID,
+		"AccountEmail": p.accountEmail,
+	}
+}
+
+func (p *Poller) renderTemplate(name, tmplStr string, data map[string]string) (string, error) {
+	tmpl, err := template.New(name).Parse(tmplStr)
+	if err != nil {
+		return "", fmt.Errorf("template parse: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("template exec: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// jobName creates a descriptive job name from rule and message.
+func jobName(prefix, ruleName string, msg HistoryMessage) string {
+	subject := msg.Subject
+	if len(subject) > 50 {
+		subject = subject[:50] + "..."
+	}
+	if ruleName != "" {
+		return fmt.Sprintf("%s/%s: %s", prefix, ruleName, subject)
+	}
+	return fmt.Sprintf("%s: %s", prefix, subject)
+}
+
+// executeCronAction sends a cron-style action directly to the gateway.
+func (p *Poller) executeCronAction(ctx context.Context, rule config.GmailRule, msg HistoryMessage) {
+	// Check context before gateway call
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	tmplStr := rule.Action.ResolvedTemplate()
+	if tmplStr == "" {
+		tmplStr = "📧 {{.From}}: {{.Subject}}"
+	}
+
+	message, err := p.renderTemplate("cron", tmplStr, p.templateData(msg))
+	if err != nil {
+		log.Printf("Gmail cron action template error: %v", err)
+		return
+	}
+
+	name := jobName("gmail", rule.Name, msg)
+	if err := p.gateway.CreateOneShotJobForAgent(
+		name,
+		message,
+		rule.Action.ResolvedAgentID(),
+		rule.Action.ResolvedTimeout(),
+		rule.Action.ResolvedDelay(),
+	); err != nil {
+		log.Printf("Gmail cron action: failed to create gateway job: %v", err)
+	}
+}
+
+func (p *Poller) executeNotify(ctx context.Context, notify *config.GmailNotifyAction, msg HistoryMessage) {
+	// Check context before gateway call
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
 	tmplStr := notify.Template
 	if tmplStr == "" {
 		tmplStr = "📧 {{.From}}: {{.Subject}}"
 	}
 
-	tmpl, err := template.New("notify").Parse(tmplStr)
+	message, err := p.renderTemplate("notify", tmplStr, p.templateData(msg))
 	if err != nil {
 		log.Printf("Gmail notify template error: %v", err)
 		return
 	}
 
-	data := map[string]string{
-		"From":    msg.From,
-		"Subject": msg.Subject,
-		"Snippet": msg.Snippet,
-		"ID":      msg.ID,
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		log.Printf("Gmail notify template exec error: %v", err)
-		return
-	}
-
-	message := buf.String()
-
 	// Use gateway to send notification via cron one-shot
 	jobMsg := fmt.Sprintf("Send this exact message to Telegram (target=%s, channel=%s). Just send it, no extra text:\n\n%s",
 		notify.Target, notify.Channel, message)
 
-	if err := p.gateway.CreateOneShotJobForAgent("gmail-notify", jobMsg, notify.AgentID, 30, 0); err != nil {
+	name := jobName("gmail-notify", "", msg)
+	if err := p.gateway.CreateOneShotJobForAgent(name, jobMsg, notify.AgentID, 30, 0); err != nil {
 		log.Printf("Gmail notify: failed to create gateway job: %v", err)
+	}
+}
+
+// handleAuthError sends an alert if the error looks like an auth failure and cooldown has passed.
+func (p *Poller) handleAuthError(ctx context.Context, err error) {
+	if p.authAlertCfg == nil || !p.authAlertCfg.Enabled {
+		return
+	}
+
+	errStr := err.Error()
+	isAuth := strings.Contains(errStr, "not authenticated") ||
+		strings.Contains(errStr, "token refresh") ||
+		strings.Contains(errStr, "oauth2") ||
+		strings.Contains(errStr, "401") ||
+		strings.Contains(errStr, "invalid_grant")
+	if !isAuth {
+		return
+	}
+
+	// Cooldown: don't spam alerts
+	if !p.lastAuthErr.IsZero() && time.Since(p.lastAuthErr) < p.authErrCooldown {
+		return
+	}
+	p.lastAuthErr = time.Now()
+
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	tmplStr := p.authAlertCfg.MessageTemplate
+	if tmplStr == "" {
+		tmplStr = "[Relay Alert] Gmail auth failed for {{.AccountEmail}}: {{.Error}}"
+	}
+
+	data := map[string]string{
+		"AccountEmail": p.accountEmail,
+		"Error":        errStr,
+		"NowRFC3339":   time.Now().UTC().Format(time.RFC3339),
+	}
+
+	message, tmplErr := p.renderTemplate("auth-alert", tmplStr, data)
+	if tmplErr != nil {
+		log.Printf("Gmail auth alert template error: %v", tmplErr)
+		message = fmt.Sprintf("[Relay Alert] Gmail auth failed for %s: %s", p.accountEmail, errStr)
+	}
+
+	timeout := p.authAlertCfg.Timeout
+	if timeout == 0 {
+		timeout = 90
+	}
+
+	log.Printf("Gmail auth alert: sending for %s", p.accountEmail)
+	if alertErr := p.gateway.CreateOneShotJobForAgent(
+		fmt.Sprintf("gmail-auth-alert/%s", p.accountEmail),
+		message,
+		p.authAlertCfg.AgentID,
+		timeout,
+		p.authAlertCfg.Delay,
+	); alertErr != nil {
+		log.Printf("Gmail auth alert: failed to send: %v", alertErr)
 	}
 }

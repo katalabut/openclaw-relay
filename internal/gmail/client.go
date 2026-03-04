@@ -298,13 +298,21 @@ type HistoryMessage struct {
 }
 
 // GetHistory returns new messages since startHistoryId.
+// Deduplicates by message ID to avoid redundant API calls.
 func (c *Client) GetHistory(ctx context.Context, startHistoryID uint64) ([]HistoryMessage, uint64, error) {
 	svc, err := c.getService(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	var allMsgs []HistoryMessage
+	// Collect unique message IDs and their basic info from history
+	type rawMsg struct {
+		ID       string
+		ThreadID string
+		Labels   []string
+	}
+	seen := make(map[string]bool)
+	var rawMsgs []rawMsg
 	var newHistoryID uint64
 	pageToken := ""
 
@@ -322,24 +330,14 @@ func (c *Client) GetHistory(ctx context.Context, startHistoryID uint64) ([]Histo
 		for _, h := range resp.History {
 			for _, ma := range h.MessagesAdded {
 				msg := ma.Message
-				// Get metadata for the message
-				full, err := svc.Users.Messages.Get("me", msg.Id).Format("metadata").MetadataHeaders("Subject", "From").Do()
-				if err != nil {
-					log.Printf("Warning: get history message %s: %v", msg.Id, err)
-					allMsgs = append(allMsgs, HistoryMessage{
-						ID:       msg.Id,
-						ThreadID: msg.ThreadId,
-						Labels:   msg.LabelIds,
-					})
+				if seen[msg.Id] {
 					continue
 				}
-				allMsgs = append(allMsgs, HistoryMessage{
-					ID:       full.Id,
-					ThreadID: full.ThreadId,
-					Labels:   full.LabelIds,
-					Subject:  decodeRFC2047(getHeader(full.Payload.Headers, "Subject")),
-					From:     decodeRFC2047(getHeader(full.Payload.Headers, "From")),
-					Snippet:  full.Snippet,
+				seen[msg.Id] = true
+				rawMsgs = append(rawMsgs, rawMsg{
+					ID:       msg.Id,
+					ThreadID: msg.ThreadId,
+					Labels:   msg.LabelIds,
 				})
 			}
 		}
@@ -348,6 +346,29 @@ func (c *Client) GetHistory(ctx context.Context, startHistoryID uint64) ([]Histo
 			break
 		}
 		pageToken = resp.NextPageToken
+	}
+
+	// Fetch metadata for each unique message
+	var allMsgs []HistoryMessage
+	for _, rm := range rawMsgs {
+		full, err := svc.Users.Messages.Get("me", rm.ID).Format("metadata").MetadataHeaders("Subject", "From").Do()
+		if err != nil {
+			log.Printf("Warning: get history message %s: %v", rm.ID, err)
+			allMsgs = append(allMsgs, HistoryMessage{
+				ID:       rm.ID,
+				ThreadID: rm.ThreadID,
+				Labels:   rm.Labels,
+			})
+			continue
+		}
+		allMsgs = append(allMsgs, HistoryMessage{
+			ID:       full.Id,
+			ThreadID: full.ThreadId,
+			Labels:   full.LabelIds,
+			Subject:  decodeRFC2047(getHeader(full.Payload.Headers, "Subject")),
+			From:     decodeRFC2047(getHeader(full.Payload.Headers, "From")),
+			Snippet:  full.Snippet,
+		})
 	}
 
 	return allMsgs, newHistoryID, nil

@@ -10,5 +10,7 @@ RUN apk --no-cache add ca-certificates
 RUN mkdir -p /data && chown nobody:nobody /data
 COPY --from=builder /app/relay /usr/local/bin/
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD wget -qO- http://localhost:8080/health || exit 1
 USER nobody
 ENTRYPOINT ["relay", "-config", "/etc/relay/config.yaml"]

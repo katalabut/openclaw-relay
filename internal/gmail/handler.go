@@ -7,13 +7,39 @@ import (
 	"strings"
 )
 
-// Handler registers Gmail API HTTP handlers.
+// Handler registers Gmail API HTTP handlers with multi-account support.
 type Handler struct {
-	client GmailClient
+	clients      map[string]GmailClient
+	defaultEmail string
 }
 
+// NewMultiHandler creates a handler that supports multiple Gmail accounts.
+// The first account in the map iteration order is used as default (callers should
+// provide the desired default via the ?account= query parameter).
+func NewMultiHandler(clients map[string]GmailClient) *Handler {
+	var defaultEmail string
+	for email := range clients {
+		defaultEmail = email
+		break
+	}
+	return &Handler{clients: clients, defaultEmail: defaultEmail}
+}
+
+// NewHandler creates a handler with a single Gmail client (backward-compatible).
 func NewHandler(client GmailClient) *Handler {
-	return &Handler{client: client}
+	return &Handler{
+		clients:      map[string]GmailClient{"default": client},
+		defaultEmail: "default",
+	}
+}
+
+func (h *Handler) resolveClient(r *http.Request) (GmailClient, bool) {
+	account := r.URL.Query().Get("account")
+	if account == "" {
+		return h.clients[h.defaultEmail], true
+	}
+	client, ok := h.clients[account]
+	return client, ok
 }
 
 // RegisterRoutes adds Gmail API routes to the mux.
@@ -41,6 +67,11 @@ func (h *Handler) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	client, ok := h.resolveClient(r)
+	if !ok {
+		jsonError(w, "unknown account", http.StatusBadRequest)
+		return
+	}
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		q = "is:unread"
@@ -52,7 +83,7 @@ func (h *Handler) handleListMessages(w http.ResponseWriter, r *http.Request) {
 			max = v
 		}
 	}
-	msgs, err := h.client.ListMessages(r.Context(), q, max)
+	msgs, err := client.ListMessages(r.Context(), q, max)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -65,12 +96,17 @@ func (h *Handler) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	client, ok := h.resolveClient(r)
+	if !ok {
+		jsonError(w, "unknown account", http.StatusBadRequest)
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/gmail/message/")
 	if id == "" {
 		jsonError(w, "missing message id", http.StatusBadRequest)
 		return
 	}
-	msg, err := h.client.GetMessage(r.Context(), id)
+	msg, err := client.GetMessage(r.Context(), id)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -83,6 +119,11 @@ func (h *Handler) handleModifyMessage(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	client, ok := h.resolveClient(r)
+	if !ok {
+		jsonError(w, "unknown account", http.StatusBadRequest)
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/gmail/modify/")
 	if id == "" {
 		jsonError(w, "missing message id", http.StatusBadRequest)
@@ -93,7 +134,7 @@ func (h *Handler) handleModifyMessage(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if err := h.client.ModifyMessage(r.Context(), id, req); err != nil {
+	if err := client.ModifyMessage(r.Context(), id, req); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -105,7 +146,12 @@ func (h *Handler) handleListLabels(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	labels, err := h.client.ListLabels(r.Context())
+	client, ok := h.resolveClient(r)
+	if !ok {
+		jsonError(w, "unknown account", http.StatusBadRequest)
+		return
+	}
+	labels, err := client.ListLabels(r.Context())
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -118,12 +164,17 @@ func (h *Handler) handleGetThread(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	client, ok := h.resolveClient(r)
+	if !ok {
+		jsonError(w, "unknown account", http.StatusBadRequest)
+		return
+	}
 	threadID := strings.TrimPrefix(r.URL.Path, "/api/gmail/threads/")
 	if threadID == "" {
 		jsonError(w, "missing thread id", http.StatusBadRequest)
 		return
 	}
-	msgs, err := h.client.GetThread(r.Context(), threadID)
+	msgs, err := client.GetThread(r.Context(), threadID)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

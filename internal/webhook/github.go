@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"text/template"
 
 	"github.com/katalabut/openclaw-relay/internal/config"
 	"github.com/katalabut/openclaw-relay/internal/gateway"
@@ -111,11 +113,24 @@ func (h *GitHubHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prNumber := payload.PullRequest.Number
+	prTitle := payload.PullRequest.Title
 	if prNumber == 0 && len(payload.CheckRun.PullRequests) > 0 {
 		prNumber = payload.CheckRun.PullRequests[0].Number
 	}
 	if prNumber == 0 && len(payload.WorkflowRun.PullRequests) > 0 {
 		prNumber = payload.WorkflowRun.PullRequests[0].Number
+	}
+
+	conclusion := payload.CheckRun.Conclusion
+	if conclusion == "" {
+		conclusion = payload.WorkflowRun.Conclusion
+	}
+
+	// notify_mode filtering: "failures" skips successful CI runs
+	if h.Config.GitHub.NotifyMode == "failures" && conclusion == "success" {
+		log.Printf("GitHub: skipping successful %s PR#%d (notify_mode=failures)", ghEvent, prNumber)
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 
 	key := fmt.Sprintf("github:%s:%d", ghEvent, prNumber)
@@ -127,27 +142,58 @@ func (h *GitHubHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("GitHub: processing %s/%s for %s PR#%d", ghEvent, payload.Action, payload.Repository.FullName, prNumber)
 
+	// Render message from template
+	tmplStr := h.Config.GitHub.MessageTemplate
+	if tmplStr == "" {
+		tmplStr = config.DefaultGitHubMessageTemplate()
+	}
+
+	data := map[string]interface{}{
+		"Event":      ghEvent,
+		"Action":     payload.Action,
+		"Repository": payload.Repository.FullName,
+		"PRNumber":   prNumber,
+		"PRTitle":    prTitle,
+		"Conclusion": conclusion,
+	}
+
+	msg := renderGitHubMessage(tmplStr, data)
 	eventName := fmt.Sprintf("github %s/%s PR#%d", ghEvent, payload.Action, prNumber)
-	msg := fmt.Sprintf(`[Webhook Event] GitHub event detected.
 
-Source: github
-Event: %s
-Action: %s
-Repository: %s
-PR: #%d
+	timeout := h.Config.GitHub.Timeout
+	if timeout == 0 {
+		timeout = 120
+	}
+	delay := h.Config.GitHub.Delay
+	if delay == 0 {
+		delay = 2
+	}
 
-Read skills/trello-tasks/SKILL.md.
-Load board config from memory/trello-config.json.
-Check if any card with label 'AI Review' (or in In Progress) has a PR matching this event.
-If CI completed (success/failure) — check state.json for the card, act accordingly.
-If PR review submitted — process review comments.
-Telegram notifications: target=46075872, channel=telegram.
-If nothing actionable, exit silently.`, ghEvent, payload.Action, payload.Repository.FullName, prNumber)
-
-	if err := h.Gateway.CreateOneShotJob(eventName, msg, 120, 2); err != nil {
-		log.Printf("Failed to create job: %v", err)
+	agentID := h.Config.GitHub.AgentID
+	if agentID != "" {
+		if err := h.Gateway.CreateOneShotJobForAgent(eventName, msg, agentID, timeout, delay); err != nil {
+			log.Printf("Failed to create job: %v", err)
+		}
+	} else {
+		if err := h.Gateway.CreateOneShotJob(eventName, msg, timeout, delay); err != nil {
+			log.Printf("Failed to create job: %v", err)
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"ok":true}`))
+}
+
+func renderGitHubMessage(tmplStr string, data map[string]interface{}) string {
+	tmpl, err := template.New("github").Parse(tmplStr)
+	if err != nil {
+		log.Printf("GitHub message template parse error: %v", err)
+		return tmplStr
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		log.Printf("GitHub message template exec error: %v", err)
+		return tmplStr
+	}
+	return buf.String()
 }

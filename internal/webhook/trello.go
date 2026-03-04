@@ -40,6 +40,10 @@ type trelloPayload struct {
 				Name string `json:"name"`
 			} `json:"listBefore"`
 		} `json:"data"`
+		MemberCreator struct {
+			ID       string `json:"id"`
+			Username string `json:"username"`
+		} `json:"memberCreator"`
 	} `json:"action"`
 }
 
@@ -120,6 +124,13 @@ func (h *TrelloHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "commentCard":
 		if cardID == "" {
 			log.Printf("Trello: ignoring comment without card ID")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// Filter out comments from ignored members (bot accounts)
+		if h.isIgnoredMember(payload.Action.MemberCreator.ID, payload.Action.MemberCreator.Username) {
+			log.Printf("Trello: ignoring comment from bot member %s (%s) on %s",
+				payload.Action.MemberCreator.Username, payload.Action.MemberCreator.ID, cardName)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -207,6 +218,15 @@ func (h *TrelloHandler) matchCondition(condition, listName string) bool {
 					return true
 				}
 			}
+		}
+	}
+	return false
+}
+
+func (h *TrelloHandler) isIgnoredMember(memberID, username string) bool {
+	for _, ignored := range h.Config.Trello.IgnoreMembers {
+		if ignored == memberID || ignored == username {
+			return true
 		}
 	}
 	return false

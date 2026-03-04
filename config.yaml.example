@@ -6,6 +6,7 @@ gateway:
   url: "${OPENCLAW_GATEWAY_URL}"
   token: "${OPENCLAW_GATEWAY_TOKEN}"
   agent_id: "work"
+  # model: "anthropic/claude-sonnet-4-6"  # default model for gateway jobs
 
 audit:
   log_path: "/data/audit.log"
@@ -71,6 +72,10 @@ trello:
 
 github:
   secret: "${GITHUB_WEBHOOK_SECRET}"
+  # agent_id: "work"  # optional: override default agent for GitHub events
+  # message_template: |
+  #   [GitHub] {{.Event}}/{{.Action}} on {{.Repository}} PR#{{.PRNumber}}
+  #   Conclusion: {{.Conclusion}}
 
 google:
   client_id: "${GOOGLE_CLIENT_ID}"

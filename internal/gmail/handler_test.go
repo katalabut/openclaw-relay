@@ -386,3 +386,71 @@ func TestHandleGetThread_OK(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 }
+
+func TestNewMultiHandler_AccountParam(t *testing.T) {
+	mc1 := &mockGmailClient{
+		listMessagesFunc: func(_ context.Context, _ string, _ int64) ([]MessageMeta, error) {
+			return []MessageMeta{{ID: "from-acc1"}}, nil
+		},
+	}
+	mc2 := &mockGmailClient{
+		listMessagesFunc: func(_ context.Context, _ string, _ int64) ([]MessageMeta, error) {
+			return []MessageMeta{{ID: "from-acc2"}}, nil
+		},
+	}
+	h := NewMultiHandler(map[string]GmailClient{
+		"acc1@test.com": mc1,
+		"acc2@test.com": mc2,
+	})
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	// Request specific account
+	req := httptest.NewRequest("GET", "/api/gmail/messages?account=acc2@test.com", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp map[string][]MessageMeta
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if len(resp["messages"]) != 1 || resp["messages"][0].ID != "from-acc2" {
+		t.Errorf("expected from-acc2, got %v", resp["messages"])
+	}
+}
+
+func TestNewMultiHandler_UnknownAccount(t *testing.T) {
+	mc := &mockGmailClient{}
+	h := NewMultiHandler(map[string]GmailClient{"acc@test.com": mc})
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	req := httptest.NewRequest("GET", "/api/gmail/messages?account=unknown@test.com", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != 400 {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestNewMultiHandler_DefaultAccount(t *testing.T) {
+	mc := &mockGmailClient{
+		listMessagesFunc: func(_ context.Context, _ string, _ int64) ([]MessageMeta, error) {
+			return []MessageMeta{{ID: "default"}}, nil
+		},
+	}
+	h := NewMultiHandler(map[string]GmailClient{"only@test.com": mc})
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	// No account param - should use default
+	req := httptest.NewRequest("GET", "/api/gmail/messages", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}

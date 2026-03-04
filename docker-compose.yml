@@ -11,6 +11,11 @@ services:
       - webhook-relay_web
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.relay.rule=Host(`${RELAY_DOMAIN}`)"

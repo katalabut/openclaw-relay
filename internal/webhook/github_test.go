@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"context"
 	"time"
 
 	"github.com/katalabut/openclaw-relay/internal/config"
@@ -52,7 +53,7 @@ func newTestGitHubHandler(gw *mockGateway) *GitHubHandler {
 	return &GitHubHandler{
 		Config:  cfg,
 		Gateway: gw,
-		Limiter: ratelimit.New(5 * time.Minute),
+		Limiter: ratelimit.New(context.Background(), 5*time.Minute),
 	}
 }
 

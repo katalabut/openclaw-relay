@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -29,7 +30,7 @@ func newTestGoogleAuth(t *testing.T) (*GoogleAuth, *tokens.Store) {
 		RedirectURL:   "http://localhost/auth/google/callback",
 		AllowedEmails: []string{"test@example.com"},
 	}
-	ga := NewGoogleAuth(cfg, store)
+	ga := NewGoogleAuth(context.Background(), cfg, store)
 	return ga, store
 }
 

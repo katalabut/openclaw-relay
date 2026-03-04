@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/katalabut/openclaw-relay/internal/config"
 	"github.com/katalabut/openclaw-relay/internal/tokens"
@@ -24,7 +25,14 @@ var (
 		"https://www.googleapis.com/auth/calendar.readonly",
 		"https://www.googleapis.com/auth/userinfo.email",
 	}
+
+	stateTTL = 10 * time.Minute
 )
+
+type stateEntry struct {
+	email     string
+	createdAt time.Time
+}
 
 // GoogleAuth handles OAuth web flow.
 type GoogleAuth struct {
@@ -32,15 +40,15 @@ type GoogleAuth struct {
 	allowedEmails map[string]bool
 	store         *tokens.Store
 	mu            sync.Mutex
-	stateToEmail  map[string]string
+	stateToEmail  map[string]stateEntry
 }
 
-func NewGoogleAuth(cfg *config.GoogleConfig, store *tokens.Store) *GoogleAuth {
+func NewGoogleAuth(ctx context.Context, cfg *config.GoogleConfig, store *tokens.Store) *GoogleAuth {
 	allowed := make(map[string]bool, len(cfg.AllowedEmails))
 	for _, e := range cfg.AllowedEmails {
 		allowed[e] = true
 	}
-	return &GoogleAuth{
+	ga := &GoogleAuth{
 		oauthCfg: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -50,8 +58,10 @@ func NewGoogleAuth(cfg *config.GoogleConfig, store *tokens.Store) *GoogleAuth {
 		},
 		allowedEmails: allowed,
 		store:         store,
-		stateToEmail:  map[string]string{},
+		stateToEmail:  map[string]stateEntry{},
 	}
+	go ga.cleanupStates(ctx)
+	return ga
 }
 
 // OAuthConfig returns the oauth2 config for token refresh.
@@ -68,7 +78,7 @@ func (g *GoogleAuth) generateState(requestedEmail ...string) string {
 		email = requestedEmail[0]
 	}
 	g.mu.Lock()
-	g.stateToEmail[state] = email
+	g.stateToEmail[state] = stateEntry{email: email, createdAt: time.Now()}
 	g.mu.Unlock()
 	return state
 }
@@ -76,11 +86,14 @@ func (g *GoogleAuth) generateState(requestedEmail ...string) string {
 func (g *GoogleAuth) consumeState(state string) (string, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	email, ok := g.stateToEmail[state]
+	entry, ok := g.stateToEmail[state]
 	if ok {
 		delete(g.stateToEmail, state)
+		if time.Since(entry.createdAt) > stateTTL {
+			return "", false
+		}
 	}
-	return email, ok
+	return entry.email, ok
 }
 
 // verifyState keeps backward-compatible behavior for tests.
@@ -89,6 +102,26 @@ func (g *GoogleAuth) verifyState(state string) bool {
 	defer g.mu.Unlock()
 	_, ok := g.stateToEmail[state]
 	return ok
+}
+
+func (g *GoogleAuth) cleanupStates(ctx context.Context) {
+	ticker := time.NewTicker(stateTTL)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			g.mu.Lock()
+			now := time.Now()
+			for k, entry := range g.stateToEmail {
+				if now.Sub(entry.createdAt) > stateTTL {
+					delete(g.stateToEmail, k)
+				}
+			}
+			g.mu.Unlock()
+		}
+	}
 }
 
 // RegisterRoutes adds OAuth routes to the mux.

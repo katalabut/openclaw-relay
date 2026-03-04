@@ -3,9 +3,11 @@ package audit
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -35,6 +37,13 @@ func NewLogger(path string) (*Logger, error) {
 	return &Logger{file: f}, nil
 }
 
+// Close closes the audit log file.
+func (l *Logger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.file.Close()
+}
+
 func (l *Logger) Log(e Entry) {
 	data, err := json.Marshal(e)
 	if err != nil {
@@ -56,6 +65,21 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// extractClientIP returns the client IP from X-Forwarded-For or RemoteAddr.
+func extractClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// First IP in the chain is the original client
+		if ip := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0]); ip != "" {
+			return ip
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 func Middleware(logger *Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -66,7 +90,7 @@ func Middleware(logger *Logger, next http.Handler) http.Handler {
 			Method:    r.Method,
 			Path:      r.URL.Path,
 			Status:    rw.status,
-			SourceIP:  r.RemoteAddr,
+			SourceIP:  extractClientIP(r),
 			LatencyMs: time.Since(start).Milliseconds(),
 		})
 	})
