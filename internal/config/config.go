@@ -27,8 +27,7 @@ type GoogleConfig struct {
 type GmailConfig struct {
 	Enabled      bool               `yaml:"enabled"`
 	PollInterval string             `yaml:"poll_interval"`
-	Rules        []GmailRule        `yaml:"rules"`    // legacy single-account mode
-	Accounts     []GmailAccountConf `yaml:"accounts"` // multi-account mode
+	Accounts     []GmailAccountConf `yaml:"accounts"`
 }
 
 type GmailAccountConf struct {
@@ -143,30 +142,14 @@ func (c *Config) ListIDToName(id string) string {
 	return ""
 }
 
-// ResolvedAccounts returns Gmail account configs with legacy fallback.
-func (g GmailConfig) ResolvedAccounts(allowedEmails []string) []GmailAccountConf {
-	if len(g.Accounts) > 0 {
-		out := make([]GmailAccountConf, 0, len(g.Accounts))
-		for _, a := range g.Accounts {
-			if a.PollInterval == "" {
-				a.PollInterval = g.PollInterval
-			}
-			out = append(out, a)
+// ResolvedAccounts returns Gmail account configs with inherited poll interval.
+func (g GmailConfig) ResolvedAccounts() []GmailAccountConf {
+	out := make([]GmailAccountConf, 0, len(g.Accounts))
+	for _, a := range g.Accounts {
+		if a.PollInterval == "" {
+			a.PollInterval = g.PollInterval
 		}
-		return out
+		out = append(out, a)
 	}
-
-	if len(g.Rules) == 0 {
-		return nil
-	}
-
-	legacyEmail := ""
-	if len(allowedEmails) == 1 {
-		legacyEmail = allowedEmails[0]
-	}
-	return []GmailAccountConf{{
-		Email:        legacyEmail,
-		PollInterval: g.PollInterval,
-		Rules:        g.Rules,
-	}}
+	return out
 }

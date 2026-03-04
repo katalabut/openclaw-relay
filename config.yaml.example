@@ -81,13 +81,16 @@ google:
 
 gmail:
   enabled: true
-  poll_interval: 60s
-  rules:
-    - name: "new-inbox-message"
-      match:
-        labels: ["INBOX"]
-      action:
-        notify:
-          target: "${TELEGRAM_CHAT_ID}"
-          channel: "telegram"
-          template: "📧 {{.From}}: {{.Subject}}"
+  poll_interval: 60s  # default for accounts without explicit poll_interval
+  accounts:
+    - email: "your@email.com"
+      # poll_interval: 30s  # optional, overrides global
+      rules:
+        - name: "new-inbox-message"
+          match:
+            labels: ["INBOX"]
+          action:
+            notify:
+              target: "${TELEGRAM_CHAT_ID}"
+              channel: "telegram"
+              template: "📧 {{.From}}: {{.Subject}}"

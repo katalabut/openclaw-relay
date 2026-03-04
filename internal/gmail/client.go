@@ -32,10 +32,6 @@ type Client struct {
 	email    string
 }
 
-func NewClient(store *tokens.Store, oauthCfg *oauth2.Config) *Client {
-	return &Client{store: store, oauthCfg: oauthCfg}
-}
-
 func NewClientForAccount(store *tokens.Store, oauthCfg *oauth2.Config, email string) *Client {
 	return &Client{store: store, oauthCfg: oauthCfg, email: email}
 }
@@ -43,9 +39,6 @@ func NewClientForAccount(store *tokens.Store, oauthCfg *oauth2.Config, email str
 func (c *Client) getService(ctx context.Context) (*gm.Service, error) {
 	tok := c.store.GetGoogleOAuth2Token(c.email)
 	if tok == nil {
-		if c.email == "" {
-			return nil, fmt.Errorf("not authenticated with Google")
-		}
 		return nil, fmt.Errorf("not authenticated with Google for %s", c.email)
 	}
 	ts := c.oauthCfg.TokenSource(ctx, tok)

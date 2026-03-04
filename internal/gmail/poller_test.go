@@ -101,27 +101,26 @@ func (m *mockGW) CreateOneShotJobForAgent(name, message, agentID string, timeout
 	return nil
 }
 
-func TestNewPoller(t *testing.T) {
-	cfg := &config.GmailConfig{
-		PollInterval: "30s",
-		Rules:        []config.GmailRule{{Name: "test"}},
-	}
+func TestNewPollerForAccount(t *testing.T) {
 	mc := &mockGmailClient{} // from handler_test.go — same package
 	gw := &mockGW{}
-	p := NewPoller(mc, cfg, gw, t.TempDir())
+	rules := []config.GmailRule{{Name: "test"}}
+	p := NewPollerForAccount(mc, "user@example.com", "30s", rules, gw, t.TempDir())
 	if p.interval.Seconds() != 30 {
 		t.Errorf("expected 30s interval, got %v", p.interval)
 	}
 	if len(p.rules) != 1 {
 		t.Errorf("expected 1 rule, got %d", len(p.rules))
 	}
+	if p.accountEmail != "user@example.com" {
+		t.Errorf("expected user@example.com, got %s", p.accountEmail)
+	}
 }
 
-func TestNewPoller_DefaultInterval(t *testing.T) {
-	cfg := &config.GmailConfig{}
+func TestNewPollerForAccount_DefaultInterval(t *testing.T) {
 	mc := &mockGmailClient{}
 	gw := &mockGW{}
-	p := NewPoller(mc, cfg, gw, t.TempDir())
+	p := NewPollerForAccount(mc, "user@example.com", "", nil, gw, t.TempDir())
 	if p.interval.Seconds() != 60 {
 		t.Errorf("expected 60s default, got %v", p.interval)
 	}
@@ -370,7 +369,7 @@ func TestLoadState_NoFile(t *testing.T) {
 
 func TestSaveLoadState_Roundtrip(t *testing.T) {
 	dir := t.TempDir()
-	p := &Poller{stateDir: dir}
+	p := &Poller{accountEmail: "user@example.com", stateDir: dir}
 
 	state := &GmailState{HistoryID: 12345}
 	if err := p.saveState(state); err != nil {
@@ -386,7 +385,7 @@ func TestSaveLoadState_Roundtrip(t *testing.T) {
 	}
 
 	// Verify file content
-	data, _ := os.ReadFile(filepath.Join(dir, "gmail-state.json"))
+	data, _ := os.ReadFile(filepath.Join(dir, "gmail-state-user_at_example.com.json"))
 	var s GmailState
 	json.Unmarshal(data, &s)
 	if s.HistoryID != 12345 {

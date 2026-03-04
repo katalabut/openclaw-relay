@@ -31,10 +31,6 @@ type Poller struct {
 	stateDir     string
 }
 
-func NewPoller(client GmailClient, cfg *config.GmailConfig, gw gateway.GatewayClient, stateDir string) *Poller {
-	return NewPollerForAccount(client, "", cfg.PollInterval, cfg.Rules, gw, stateDir)
-}
-
 func NewPollerForAccount(client GmailClient, accountEmail, pollInterval string, rules []config.GmailRule, gw gateway.GatewayClient, stateDir string) *Poller {
 	interval := 60 * time.Second
 	if pollInterval != "" {
@@ -53,9 +49,6 @@ func NewPollerForAccount(client GmailClient, accountEmail, pollInterval string, 
 }
 
 func (p *Poller) stateFile() string {
-	if p.accountEmail == "" {
-		return filepath.Join(p.stateDir, "gmail-state.json")
-	}
 	safe := strings.ReplaceAll(p.accountEmail, "/", "_")
 	safe = strings.ReplaceAll(safe, "@", "_at_")
 	return filepath.Join(p.stateDir, fmt.Sprintf("gmail-state-%s.json", safe))

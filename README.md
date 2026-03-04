@@ -161,18 +161,20 @@ google:
 # Gmail integration
 gmail:
   enabled: true                            # Enable Gmail polling
-  poll_interval: 60s                       # Polling frequency (Go duration)
-  rules:
-    - name: "new-inbox-message"
-      match:
-        labels: ["INBOX"]                  # All listed labels must be present
-        from: ["*@example.com"]            # Prefix with * for suffix match
-        query: ""                          # Gmail search query (unused in polling)
-      action:
-        notify:
-          target: "USER_ID"               # Telegram user/chat ID
-          channel: "telegram"
-          template: "📧 {{.From}}: {{.Subject}}"
+  poll_interval: 60s                       # Default polling frequency
+  accounts:
+    - email: "user@example.com"            # Google account email
+      # poll_interval: 30s                 # Optional: override default
+      rules:
+        - name: "new-inbox-message"
+          match:
+            labels: ["INBOX"]              # All listed labels must be present
+            from: ["*@example.com"]        # Prefix with * for suffix match
+          action:
+            notify:
+              target: "USER_ID"            # Telegram user/chat ID
+              channel: "telegram"
+              template: "📧 {{.From}}: {{.Subject}}"
 ```
 
 Environment variables use `${VAR}` syntax and are substituted at load time.
@@ -340,16 +342,18 @@ Note: Card moves **to** the `questions` list are silently ignored (comment-only 
 
 ```yaml
 gmail:
-  rules:
-    - name: "rule-name"
-      match:
-        labels: ["INBOX"]          # ALL listed labels must be present
-        from: ["user@example.com"] # ANY listed pattern must match (case-insensitive)
-      action:
-        notify:
-          target: "CHAT_ID"
-          channel: "telegram"
-          template: "📧 {{.From}}: {{.Subject}}"
+  accounts:
+    - email: "user@example.com"
+      rules:
+        - name: "rule-name"
+          match:
+            labels: ["INBOX"]          # ALL listed labels must be present
+            from: ["user@example.com"] # ANY listed pattern must match (case-insensitive)
+          action:
+            notify:
+              target: "CHAT_ID"
+              channel: "telegram"
+              template: "📧 {{.From}}: {{.Subject}}"
 ```
 
 **Match fields:**

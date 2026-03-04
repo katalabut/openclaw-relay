@@ -73,10 +73,18 @@ server:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable Gmail polling and API endpoints |
-| `poll_interval` | string | `"60s"` | Polling frequency as a Go duration (`30s`, `2m`, etc.) |
-| `rules` | []GmailRule | — | List of Gmail matching rules |
+| `poll_interval` | string | `"60s"` | Default polling frequency for accounts without explicit `poll_interval` |
+| `accounts` | []GmailAccountConf | — | List of Gmail accounts to poll |
 
-### `gmail.rules[*]`
+### `gmail.accounts[*]`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `email` | string | — | Google account email (must be in `google.allowed_emails`) |
+| `poll_interval` | string | inherits from `gmail.poll_interval` | Polling frequency as a Go duration (`30s`, `2m`, etc.) |
+| `rules` | []GmailRule | — | List of Gmail matching rules for this account |
+
+### `gmail.accounts[*].rules[*]`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -87,6 +95,7 @@ server:
 | `action.notify.target` | string | — | Telegram user/chat ID |
 | `action.notify.channel` | string | — | Notification channel (e.g., `"telegram"`) |
 | `action.notify.template` | string | `"📧 {{.From}}: {{.Subject}}"` | Go template for notification message |
+| `action.notify.agent_id` | string | global `gateway.agent_id` | Which agent sends the notification |
 
 ## Full Annotated Example
 
@@ -132,15 +141,17 @@ google:
 gmail:
   enabled: true
   poll_interval: 60s
-  rules:
-    - name: "inbox-notify"
-      match:
-        labels: ["INBOX"]
-      action:
-        notify:
-          target: "YOUR_TELEGRAM_ID"
-          channel: "telegram"
-          template: "📧 {{.From}}: {{.Subject}}"
+  accounts:
+    - email: "you@example.com"
+      rules:
+        - name: "inbox-notify"
+          match:
+            labels: ["INBOX"]
+          action:
+            notify:
+              target: "YOUR_TELEGRAM_ID"
+              channel: "telegram"
+              template: "📧 {{.From}}: {{.Subject}}"
 ```
 
 ## Security Considerations
