@@ -30,9 +30,6 @@ type Client struct {
 }
 
 func NewClient(url, token, agentID, model string) *Client {
-	if model == "" {
-		model = "anthropic/claude-sonnet-4-6"
-	}
 	return &Client{
 		URL:     strings.TrimRight(url, "/"),
 		Token:   token,
@@ -68,12 +65,14 @@ func (c *Client) CreateOneShotJobForAgent(name, message, agentID string, timeout
 		"payload": map[string]interface{}{
 			"kind":           "agentTurn",
 			"message":        message,
-			"model":          c.Model,
 			"timeoutSeconds": timeoutSeconds,
 		},
 		"delivery": map[string]interface{}{
 			"mode": "none",
 		},
+	}
+	if c.Model != "" {
+		job["payload"].(map[string]interface{})["model"] = c.Model
 	}
 	// Only set agentId if explicitly provided; gateway uses its default otherwise
 	if agentID != "" {

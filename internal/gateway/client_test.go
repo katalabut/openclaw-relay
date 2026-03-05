@@ -16,8 +16,8 @@ func TestNewClient(t *testing.T) {
 	if c.Token != "tok" || c.AgentID != "agent1" {
 		t.Error("fields not set correctly")
 	}
-	if c.Model != "anthropic/claude-sonnet-4-6" {
-		t.Errorf("expected default model, got %s", c.Model)
+	if c.Model != "" {
+		t.Errorf("expected empty model, got %s", c.Model)
 	}
 }
 
@@ -115,6 +115,28 @@ func TestCreateOneShotJob_NotConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("empty config should not error: %v", err)
 	}
+}
+
+func TestCreateOneShotJob_NoModel_OmittedFromPayload(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req map[string]json.RawMessage
+		json.Unmarshal(body, &req)
+		var args map[string]json.RawMessage
+		json.Unmarshal(req["args"], &args)
+		var job map[string]json.RawMessage
+		json.Unmarshal(args["job"], &job)
+		var payload map[string]interface{}
+		json.Unmarshal(job["payload"], &payload)
+		if _, exists := payload["model"]; exists {
+			t.Errorf("expected model to be omitted, got %v", payload["model"])
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "tok", "agent1", "")
+	c.CreateOneShotJob("test", "msg", 120, 2)
 }
 
 func TestCreateOneShotJob_CustomModel_InPayload(t *testing.T) {
