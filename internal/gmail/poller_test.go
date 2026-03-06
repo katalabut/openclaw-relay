@@ -543,9 +543,9 @@ func TestHandleAuthError_CooldownPreventsSpam(t *testing.T) {
 func TestHandleAuthError_IgnoresNonAuthErrors(t *testing.T) {
 	gw := &mockGW{}
 	p := &Poller{
-		accountEmail: "test@test.com",
-		gateway:      gw,
-		authAlertCfg: &config.GmailAuthAlertConfig{Enabled: true, Cooldown: "1s"},
+		accountEmail:    "test@test.com",
+		gateway:         gw,
+		authAlertCfg:    &config.GmailAuthAlertConfig{Enabled: true, Cooldown: "1s"},
 		authErrCooldown: 1 * time.Second,
 	}
 

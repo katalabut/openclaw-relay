@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
@@ -9,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"context"
 	"time"
 
 	"github.com/katalabut/openclaw-relay/internal/config"

@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"context"
 	"time"
 
 	"github.com/katalabut/openclaw-relay/internal/config"
@@ -155,7 +155,7 @@ func TestServeHTTP_GitHub_CheckRunCompleted(t *testing.T) {
 	h := newTestGitHubHandler(gw)
 
 	payload := map[string]interface{}{
-		"action": "completed",
+		"action":     "completed",
 		"repository": map[string]string{"full_name": "user/repo"},
 		"check_run": map[string]interface{}{
 			"conclusion":    "success",
